@@ -1,6 +1,7 @@
 import { Product } from '../types';
 import { useShoppingCart } from '../context/ShoppingCartContext';
 import { formatCurrency } from '../lib/utils';
+import { useAuth } from '../context/AuthContext';
 
 interface ProductCardProps {
   product: Product;
@@ -8,6 +9,7 @@ interface ProductCardProps {
 
 export default function ProductCard({ product }: ProductCardProps) {
   const { addToCart, decrementCartItem, getItemQuantity } = useShoppingCart();
+  const { isAdmin } = useAuth();
   const quantity = getItemQuantity(product.SKU);
 
   return (
@@ -16,8 +18,18 @@ export default function ProductCard({ product }: ProductCardProps) {
       <div className="p-4">
         <h3 className="font-bold text-lg">{product.Artículo}</h3>
         <p className="text-gray-500">{product.Unidad}</p>
+       
         <div className="flex justify-between items-center mt-4">
           <span className="font-bold text-xl">{formatCurrency(product['$ VENTA'])}</span>
+             {isAdmin && (
+  <button 
+    onClick={() => alert('Próximamente: Panel para editar precio de ' + product.Articulo)}
+    className="ml-2 p-1 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+    title="Editar precio"
+  >
+    ✏️
+  </button>
+)}
           {quantity === 0 ? (
             <button
               onClick={() => addToCart(product)}
