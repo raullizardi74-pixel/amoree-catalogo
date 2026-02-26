@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('Login is disabled within an iframe. Please open in a new tab.');
       return;
     }
-    const redirectUrl = 'https://ais-dev-mqbop6tzw55sigkhy46qx-189684084664.us-west2.run.app/';
+    const redirectUrl = 'https://amoree-catalogo.vercel.app/';
     console.log('Redirigiendo a:', redirectUrl);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
