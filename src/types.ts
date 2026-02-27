@@ -1,18 +1,9 @@
 export interface Product {
-  id: number;
-  SKU: string;
+  sku: string;
   nombre: string;
-  precio_venta: number;
   unidad: string;
+  precio_venta: number;
   url_imagen: string;
   categoria: string;
-  '$ VENTA': number; 
-  'IMAGEN URL': string;
-  Artículo: string;
-  Unidad: string;
-  Categoría: string;
-}
-
-export interface CartItem extends Product {
-  quantity: number;
+  costo: number;
 }
