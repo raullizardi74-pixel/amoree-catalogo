@@ -11,14 +11,39 @@ export default function AdminOrders() {
     setRefreshing(true);
     const { data, error } = await supabase
       .from('pedidos')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20);
+      .select('*');
 
     if (error) {
-      console.error('Error al cargar pedidos:', error);
-    } else {
-      setOrders(data || []);
+      console.error('Error:', error);
+    } else if (data) {
+      // --- LÓGICA DE ORDENAMIENTO PERSONALIZADO ---
+      const statusWeight: Record<string, number> = {
+        'Pendiente': 1,
+        'Entregado': 2,
+        'Pagado': 3,
+        'Cancelado': 4
+      };
+
+      const sorted = data.sort((a, b) => {
+        const weightA = statusWeight[a.estado] || 5;
+        const weightB = statusWeight[b.estado] || 5;
+
+        // 1. Primero ordenamos por el peso del estado
+        if (weightA !== weightB) {
+          return weightA - weightB;
+        }
+
+        // 2. Si son el mismo estado (ej. ambos Pendientes):
+        if (a.estado === 'Pendiente') {
+          // Pendientes: El más viejo arriba (Antiguo -> Reciente)
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        }
+
+        // Para el resto: El más nuevo arriba (Reciente -> Antiguo)
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setOrders(sorted);
     }
     setLoading(false);
     setRefreshing(false);
@@ -26,31 +51,28 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  // FUNCIÓN CORREGIDA: Actualización con feedback visual
   const handleStatusChange = async (orderId: number, newStatus: string) => {
-    // 1. Actualización Optimista (Cambiamos el color en pantalla de inmediato)
-    const originalOrders = [...orders];
-    setOrders(orders.map(o => o.id === orderId ? { ...o, estado: newStatus } : o));
+    // Actualización optimista para que Hugo vea el cambio de color al instante
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, estado: newStatus } : o));
 
-    // 2. Mandamos la orden a Supabase
     const { error } = await supabase
       .from('pedidos')
       .update({ estado: newStatus })
       .eq('id', orderId);
 
     if (error) {
-      console.error('Error en Supabase:', error);
-      alert('No se pudo guardar el cambio en la base de datos. Reintentando...');
-      setOrders(originalOrders); // Si falla, regresamos al estado anterior
+      alert('Error al guardar en base de datos');
+      fetchOrders(); // Revertimos si falla
     }
   };
 
+  // ... (Funciones updateItemQuantity y finalizeOrder se mantienen igual)
   const updateItemQuantity = (orderId: number, itemIndex: number, newQty: number) => {
     const updatedOrders = orders.map(order => {
       if (order.id === orderId) {
         const newDetails = [...order.detalle_pedido];
         newDetails[itemIndex].quantity = newQty;
-        const newTotal = newDetails.reduce((sum, item) => sum + (item.precio_venta * item.quantity), 0);
+        const newTotal = newDetails.reduce((sum: number, item: any) => sum + (item.precio_venta * item.quantity), 0);
         return { ...order, detalle_pedido: newDetails, total: newTotal };
       }
       return order;
@@ -68,7 +90,7 @@ export default function AdminOrders() {
       })
       .eq('id', order.id);
 
-    if (error) return alert('Error al guardar cambios');
+    if (error) return alert('Error al guardar');
 
     let ticket = `✅ *TICKET DE VENTA - AMOREE*\n`;
     ticket += `--------------------------\n`;
@@ -77,7 +99,6 @@ export default function AdminOrders() {
     });
     ticket += `--------------------------\n`;
     ticket += `💰 *TOTAL FINAL: ${formatCurrency(order.total)}*\n`;
-    
     const whatsappUrl = `https://wa.me/52${order.telefono_cliente}?text=${encodeURIComponent(ticket)}`;
     window.open(whatsappUrl, '_blank');
     fetchOrders();
@@ -88,27 +109,29 @@ export default function AdminOrders() {
   return (
     <div className="p-4 max-w-4xl mx-auto bg-gray-50 min-h-screen pb-20">
       <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border border-green-100">
-        <h1 className="text-xl font-black text-green-900 uppercase">Gestión Amoree</h1>
+        <div>
+          <h1 className="text-xl font-black text-green-900 uppercase">Gestión Amoree</h1>
+          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">Prioridad: Pendientes más antiguos primero</p>
+        </div>
         <button 
           onClick={fetchOrders} 
           disabled={refreshing}
-          className={`text-xs font-bold px-4 py-2 rounded-full transition-all ${refreshing ? 'bg-gray-100 text-gray-400' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
+          className="text-xs font-bold px-4 py-2 rounded-full bg-green-100 text-green-700 hover:bg-green-200"
         >
-          {refreshing ? '🔄 Actualizando...' : '🔄 Refrescar'}
+          {refreshing ? '🔄 Ordenando...' : '🔄 Refrescar'}
         </button>
       </div>
 
       <div className="space-y-6">
-        {orders.length === 0 ? <p className="text-center text-gray-400 py-10">No hay pedidos registrados.</p> : orders.map(order => (
+        {orders.map(order => (
           <div key={order.id} className={`bg-white rounded-2xl p-5 shadow-md border-l-8 transition-all ${
             order.estado === 'Pendiente' ? 'border-yellow-400' : 
             order.estado === 'Pagado' ? 'border-blue-500' : 
             order.estado === 'Cancelado' ? 'border-red-400' : 'border-green-500'
           }`}>
-            
             <div className="flex justify-between items-start mb-4">
               <div>
-                <span className="text-[10px] font-bold text-gray-400 block tracking-widest uppercase">ID: #{order.id}</span>
+                <span className="text-[10px] font-bold text-gray-400 block tracking-widest uppercase">ID: #{order.id} - {new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                 <span className="text-sm font-black text-gray-700 flex items-center gap-1">
                   📞 {order.telefono_cliente || 'Sin teléfono'}
                 </span>
