@@ -24,16 +24,20 @@ export function useShoppingCart() {
 export function ShoppingCartProvider({ children }: { children: ReactNode }) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
+  // CORREGIDO: Usamos sku en minúsculas
   const getItemQuantity = (sku: string) => {
-    return cartItems.find(item => item.SKU === sku)?.quantity || 0;
+    return cartItems.find(item => (item.sku || item.SKU) === sku)?.quantity || 0;
   };
 
+  // CORREGIDO: Sincronizamos con los nombres de la base de datos
   const addToCart = (product: Product) => {
     setCartItems(prevItems => {
-      const existingItem = prevItems.find(item => item.SKU === product.SKU);
+      const productSku = product.sku || product.SKU;
+      const existingItem = prevItems.find(item => (item.sku || item.SKU) === productSku);
+      
       if (existingItem) {
         return prevItems.map(item =>
-          item.SKU === product.SKU ? { ...item, quantity: item.quantity + 1 } : item
+          (item.sku || item.SKU) === productSku ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
       return [...prevItems, { ...product, quantity: 1 }];
@@ -42,22 +46,24 @@ export function ShoppingCartProvider({ children }: { children: ReactNode }) {
 
   const decrementCartItem = (sku: string) => {
     setCartItems(prevItems => {
-      const existingItem = prevItems.find(item => item.SKU === sku);
+      const existingItem = prevItems.find(item => (item.sku || item.SKU) === sku);
       if (existingItem?.quantity === 1) {
-        return prevItems.filter(item => item.SKU !== sku);
+        return prevItems.filter(item => (item.sku || item.SKU) !== sku);
       }
       return prevItems.map(item =>
-        item.SKU === sku ? { ...item, quantity: item.quantity - 1 } : item
+        (item.sku || item.SKU) === sku ? { ...item, quantity: item.quantity - 1 } : item
       );
     });
   };
 
   const removeFromCart = (sku: string) => {
-    setCartItems(prevItems => prevItems.filter(item => item.SKU !== sku));
+    setCartItems(prevItems => prevItems.filter(item => (item.sku || item.SKU) !== sku));
   };
 
+  // LA CORRECCIÓN CLAVE: Multiplicar usando precio_venta
   const cartTotal = cartItems.reduce((total, item) => {
-    return total + (item['$ VENTA'] * item.quantity);
+    const precio = item.precio_venta || item['$ VENTA'] || 0;
+    return total + (precio * item.quantity);
   }, 0);
 
   const value = {
