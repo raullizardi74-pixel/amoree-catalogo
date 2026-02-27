@@ -49,13 +49,15 @@ export default function ShoppingCart() {
     }
 
     const phoneNumber = '522215306435';
+// MENSAJE PERSONALIZADO PARA HUGO Y ROSI (Corregido con Emojis estándar)
     let message = `🛒 *NUEVO PEDIDO - AMOREE*\n`;
     message += `👤 *Cliente:* ${clienteNombre}\n`;
-    message += `📞 *Tel:* ${phone}\n`; // Añadimos el tel al mensaje de WhatsApp
+    message += `📞 *Tel:* ${phone}\n`;
     message += `--------------------------\n\n`;
     
     cartItems.forEach(item => {
       const unidad = item.unidad || '';
+      // Usamos un punto estándar para evitar errores de símbolos
       message += `• ${item.quantity} ${unidad} x ${item.nombre} - ${formatCurrency(item.precio_venta * item.quantity)}\n`;
     });
 
@@ -64,7 +66,7 @@ export default function ShoppingCart() {
     message += `🚚 *Envío:* ${formatCurrency(shippingCost)}\n`;
     message += `🧾 *TOTAL APROXIMADO:* ${formatCurrency(total)}\n\n`;
     message += `📅 *Entrega:* ${format(deliveryDate, 'PPP', { locale: es })} a las ${deliveryTime}\n\n`;
-    message += `⚠️ _Nota: El total final se confirmará tras el pesaje real._`;
+    message += `⚠️ _Nota: Amoree confirmará el peso real en báscula antes de enviar._`;
 
     const whatsappUrl = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
