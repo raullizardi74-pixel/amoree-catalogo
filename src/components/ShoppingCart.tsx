@@ -25,7 +25,7 @@ export default function ShoppingCart() {
   const handleCheckout = async () => {
     // Validación básica: Hugo necesita el teléfono sí o sí
     if (!phone || phone.length < 10) {
-      alert('Por favor, ingresa un número de teléfono válido para que Hugo y Rosi puedan contactarte.');
+      alert('Por favor, ingresa un número de teléfono válido para que Amoree pueda contactarte.');
       return;
     }
 
@@ -182,7 +182,7 @@ export default function ShoppingCart() {
               <span>{formatCurrency(total)}</span>
             </div>
             <p className="text-[9px] text-gray-400 italic text-center mt-2 leading-tight">
-              * Hugo y Rosi confirmarán el peso real antes del envío.
+              * Amoree confirmará el peso real antes del envío.
             </p>
           </div>
 
