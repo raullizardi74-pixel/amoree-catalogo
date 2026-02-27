@@ -22,10 +22,9 @@ export default function ShoppingCart() {
   const handleCheckout = async () => {
     if (user) {
       const orderDetails = {
-        usuario_email: user.email,     // Cambiado: coincide con tu tabla
-        detalle_pedido: cartItems,     // Cambiado: coincide con tu tabla
-        total: total                   // Este se queda igual
-        // Quitamos las fechas de entrega porque no tienes esas columnas en la tabla 'pedidos'
+        usuario_email: user.email,
+        detalle_pedido: cartItems,
+        total: total,
       };
 
       const { error } = await supabase.from('pedidos').insert([orderDetails]);
@@ -39,7 +38,8 @@ export default function ShoppingCart() {
     const phoneNumber = '522215306435';
     let message = 'Hola! Quisiera hacer el siguiente pedido:\n\n';
     cartItems.forEach(item => {
-      message += `${item.quantity} x ${item.Artículo} - ${formatCurrency(item['$ VENTA'] * item.quantity)}\n`;
+      // CORREGIDO: Usamos nombre y precio_venta
+      message += `${item.quantity} x ${item.nombre} - ${formatCurrency(item.precio_venta * item.quantity)}\n`;
     });
     message += `\nSubtotal: ${formatCurrency(cartTotal)}\n`;
     message += `Envío: ${formatCurrency(shippingCost)}\n`;
@@ -51,7 +51,7 @@ export default function ShoppingCart() {
     window.open(whatsappUrl, '_blank');
   };
 
- const handleRepeatLastOrder = async () => {
+  const handleRepeatLastOrder = async () => {
     if (!user) return;
     setLoading(true);
     try {
@@ -68,14 +68,12 @@ export default function ShoppingCart() {
       if (lastOrder && lastOrder.detalle_pedido) {
         const { data: currentProducts, error: productsError } = await supabase
           .from('productos')
-          .select('sku, nombre, precio_venta'); // Traemos los datos actuales
+          .select('sku, nombre, precio_venta');
 
         if (productsError) throw productsError;
 
         const updatedCart = lastOrder.detalle_pedido.map((oldItem: any) => {
-          // Buscamos el producto actual por su SKU (manejando mayúsculas o minúsculas)
           const currentProduct = currentProducts.find(p => p.sku === (oldItem.sku || oldItem.SKU));
-          
           return {
             sku: currentProduct ? currentProduct.sku : (oldItem.sku || oldItem.SKU),
             nombre: currentProduct ? currentProduct.nombre : (oldItem.nombre || oldItem.Artículo),
@@ -120,14 +118,15 @@ export default function ShoppingCart() {
         <>
           <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
             {cartItems.map(item => (
-              <div key={item.SKU} className="flex justify-between items-center">
+              // CORREGIDO: Usamos item.sku, item.nombre e item.precio_venta
+              <div key={item.sku} className="flex justify-between items-center">
                 <div>
-                  <p className="font-semibold">{item.Artículo}</p>
-                  <p className="text-sm text-gray-500">{item.quantity} x {formatCurrency(item['$ VENTA'])}</p>
+                  <p className="font-semibold">{item.nombre}</p>
+                  <p className="text-sm text-gray-500">{item.quantity} x {formatCurrency(item.precio_venta)}</p>
                 </div>
                 <div className='flex items-center gap-2'>
-                    <p className='font-semibold'>{formatCurrency(item.quantity * item['$ VENTA'])}</p>
-                    <button onClick={() => removeFromCart(item.SKU)} className='text-red-500 hover:text-red-700'>
+                    <p className='font-semibold'>{formatCurrency(item.quantity * item.precio_venta)}</p>
+                    <button onClick={() => removeFromCart(item.sku)} className='text-red-500 hover:text-red-700'>
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
                     </button>
                 </div>
