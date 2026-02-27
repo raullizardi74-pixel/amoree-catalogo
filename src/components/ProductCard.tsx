@@ -83,8 +83,8 @@ export default function ProductCard({ product }: ProductCardProps) {
                 </span>
                 
                 <button
-                  onClick={handleIncrement}
-                  className="bg-white text-gray-700 font-black py-1 px-2.5 rounded-md border border-gray-200 active:bg-gray-300"
+                  onClick={addToCart(product, 0.25)}
+                  className="bg-green-600 text-white font-bold py-2 px-5 rounded-lg hover:bg-green-700 transition-colors"
                 >
                   +
                 </button>
