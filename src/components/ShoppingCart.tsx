@@ -57,16 +57,16 @@ export default function ShoppingCart() {
     try {
       const { data, error } = await supabase
         .from('pedidos')
-        .select('items')
-        .eq('user_email', user.email)
+        .select('detalle_pedido')          // Cambiado: era 'items'
+        .eq('usuario_email', user.email)   // Cambiado: era 'user_email'
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
       if (error) throw error;
 
-      if (data && data.items) {
-        setCartItems(data.items);
+      if (data && data.detalle_pedido) {   // Cambiado: era 'items'
+        setCartItems(data.detalle_pedido); // Cambiado: era 'items'
       }
     } catch (error) {
       console.error('Error fetching last order:', error);
