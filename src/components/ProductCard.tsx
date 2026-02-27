@@ -74,9 +74,9 @@ export default function ProductCard({ product }: ProductCardProps) {
                 </button>
               )}
             </div>
-          )} {/* <--- ESTA ES LA LLAVE QUE FALTABA PARA CERRAR EL MODO EDICIÓN */}
+          )}
 
-          {/* LÓGICA DE CARRITO */}
+          
           {quantity === 0 ? (
             <button
               onClick={() => addToCart(product)}
