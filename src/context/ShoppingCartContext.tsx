@@ -29,7 +29,7 @@ export function ShoppingCartProvider({ children }: { children: ReactNode }) {
   };
 
   // ACTUALIZADO: Ahora acepta un "step" (ej. 0.25)
-  const addToCart = (product: Product, step: number = 1) => {
+  const addToCart = (product: Product, step: number = 0.250) => {
     setCartItems(prevItems => {
       const productSku = product.sku || product.SKU;
       const existingItem = prevItems.find(item => (item.sku || item.SKU) === productSku);
@@ -46,7 +46,7 @@ export function ShoppingCartProvider({ children }: { children: ReactNode }) {
   };
 
   // ACTUALIZADO: Ahora resta por "step" y elimina si llega a 0
-  const decrementCartItem = (sku: string, step: number = 1) => {
+  const decrementCartItem = (sku: string, step: number = 0.250) => {
     setCartItems(prevItems => {
       const existingItem = prevItems.find(item => (item.sku || item.SKU) === sku);
       
