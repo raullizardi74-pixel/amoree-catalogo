@@ -51,22 +51,40 @@ export default function ShoppingCart() {
     window.open(whatsappUrl, '_blank');
   };
 
-  const handleRepeatLastOrder = async () => {
+ const handleRepeatLastOrder = async () => {
     if (!user) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data: lastOrder, error: orderError } = await supabase
         .from('pedidos')
-        .select('detalle_pedido')          // Cambiado: era 'items'
-        .eq('usuario_email', user.email)   // Cambiado: era 'user_email'
+        .select('detalle_pedido')
+        .eq('usuario_email', user.email)
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
-      if (error) throw error;
+      if (orderError) throw orderError;
 
-      if (data && data.detalle_pedido) {   // Cambiado: era 'items'
-        setCartItems(data.detalle_pedido); // Cambiado: era 'items'
+      if (lastOrder && lastOrder.detalle_pedido) {
+        const { data: currentProducts, error: productsError } = await supabase
+          .from('productos')
+          .select('sku, nombre, precio_venta'); // Traemos los datos actuales
+
+        if (productsError) throw productsError;
+
+        const updatedCart = lastOrder.detalle_pedido.map((oldItem: any) => {
+          // Buscamos el producto actual por su SKU (manejando mayúsculas o minúsculas)
+          const currentProduct = currentProducts.find(p => p.sku === (oldItem.sku || oldItem.SKU));
+          
+          return {
+            sku: currentProduct ? currentProduct.sku : (oldItem.sku || oldItem.SKU),
+            nombre: currentProduct ? currentProduct.nombre : (oldItem.nombre || oldItem.Artículo),
+            precio_venta: currentProduct ? currentProduct.precio_venta : (oldItem.precio_venta || oldItem['$ VENTA']),
+            quantity: oldItem.quantity
+          };
+        });
+
+        setCartItems(updatedCart);
       }
     } catch (error) {
       console.error('Error fetching last order:', error);
