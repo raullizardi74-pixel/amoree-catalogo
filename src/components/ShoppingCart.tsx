@@ -22,11 +22,10 @@ export default function ShoppingCart() {
   const handleCheckout = async () => {
     if (user) {
       const orderDetails = {
-        user_email: user.email,
-        items: cartItems,
-        total: total,
-        delivery_date: deliveryDate,
-        delivery_time: deliveryTime,
+        usuario_email: user.email,     // Cambiado: coincide con tu tabla
+        detalle_pedido: cartItems,     // Cambiado: coincide con tu tabla
+        total: total                   // Este se queda igual
+        // Quitamos las fechas de entrega porque no tienes esas columnas en la tabla 'pedidos'
       };
 
       const { error } = await supabase.from('pedidos').insert([orderDetails]);
