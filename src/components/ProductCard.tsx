@@ -14,19 +14,19 @@ export default function ProductCard({ product }: ProductCardProps) {
   const { isAdmin } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   
-  // Estados para edición de Costo y Precio
+  // Estados para la edición financiera
   const [newCosto, setNewCosto] = useState(product.costo || 0);
   const [newPrice, setNewPrice] = useState((product.precio_venta || 0).toString());
   
   const currentSku = product.sku || product.SKU || '';
   const quantity = getItemQuantity(currentSku);
-  const MARGEN = 1.20; // 20% de utilidad sugerida
+  const MARGEN = 1.20; // 20% de utilidad
 
-  // Lógica de cálculo automático
+  // Calcula el precio de venta sugerido automáticamente
   const handleCostoChange = (valor: string) => {
     const costoNum = parseFloat(valor) || 0;
     setNewCosto(costoNum);
-    // Sugerimos el precio de venta automáticamente (Costo * 1.20)
+    // Sugerimos el precio de venta (Costo * 1.20)
     setNewPrice((costoNum * MARGEN).toFixed(2));
   };
 
@@ -35,27 +35,27 @@ export default function ProductCard({ product }: ProductCardProps) {
       const { error } = await supabase
         .from('productos')
         .update({ 
-          costo: newCosto,
+          costo: newCosto, 
           precio_venta: parseFloat(newPrice) 
         })
         .eq('sku', currentSku);
         
       if (error) throw error;
       setIsEditing(false);
-      window.location.reload();
+      window.location.reload(); // Recarga para ver los cambios reflejados
     } catch (e) {
-      alert('Error al guardar datos en Supabase');
+      alert('Error al guardar datos en la base de datos.');
     }
   };
 
   return (
-    <div className="bg-white rounded-3xl shadow-md overflow-hidden transform hover:scale-[1.02] transition-all duration-300 border border-gray-100 flex flex-col">
-      {/* Imagen del Producto */}
+    <div className="bg-white rounded-3xl shadow-md overflow-hidden transform hover:scale-[1.01] transition-all duration-300 border border-gray-100 flex flex-col h-full">
+      {/* Imagen y botón de edición para Admin */}
       <div className="relative">
         <img 
           src={product.url_imagen} 
           alt={product.nombre} 
-          className="w-full h-44 object-cover" 
+          className="w-full h-40 object-cover" 
           referrerPolicy="no-referrer" 
         />
         {isAdmin && (
@@ -78,10 +78,10 @@ export default function ProductCard({ product }: ProductCardProps) {
         
         <div className="mt-auto">
           {isEditing && isAdmin ? (
-            /* MODO EDICIÓN PARA HUGO */
-            <div className="bg-blue-50 p-3 rounded-2xl space-y-3 border border-blue-100 mb-2">
+            /* PANEL DE EDICIÓN (SOLO ADMIN) */
+            <div className="bg-blue-50 p-3 rounded-2xl space-y-3 border border-blue-100">
               <div>
-                <label className="text-[9px] font-black text-blue-800 uppercase block mb-1">Costo real ($)</label>
+                <label className="text-[9px] font-black text-blue-800 uppercase block mb-1">Costo Real ($)</label>
                 <input 
                   type="number" 
                   value={newCosto} 
@@ -90,7 +90,7 @@ export default function ProductCard({ product }: ProductCardProps) {
                 />
               </div>
               <div>
-                <label className="text-[9px] font-black text-green-800 uppercase block mb-1">Venta (+20%)</label>
+                <label className="text-[9px] font-black text-green-800 uppercase block mb-1">Venta Sugerida (+20%)</label>
                 <input 
                   type="number" 
                   value={newPrice} 
@@ -100,13 +100,13 @@ export default function ProductCard({ product }: ProductCardProps) {
               </div>
               <button 
                 onClick={handleUpdatePrice}
-                className="w-full bg-blue-600 text-white font-black py-2 rounded-xl text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-colors"
+                className="w-full bg-blue-600 text-white font-black py-2 rounded-xl text-[10px] uppercase tracking-widest hover:bg-blue-700"
               >
-                Actualizar
+                Guardar Cambios
               </button>
             </div>
           ) : (
-            /* MODO VISTA NORMAL */
+            /* VISTA NORMAL (CLIENTE) */
             <div className="flex justify-between items-center">
               <div className="flex flex-col">
                 <span className="text-2xl font-black text-green-700 tracking-tighter">
@@ -119,11 +119,12 @@ export default function ProductCard({ product }: ProductCardProps) {
                 )}
               </div>
 
+              {/* Controles de Carrito */}
               <div className="flex items-center bg-gray-100 rounded-2xl p-1">
                 {quantity === 0 ? (
                   <button
                     onClick={() => addToCart(product, 0.25)}
-                    className="bg-green-600 text-white font-black py-2.5 px-6 rounded-xl hover:bg-green-700 active:scale-95 transition-all text-xs"
+                    className="bg-green-600 text-white font-black py-2 px-6 rounded-xl hover:bg-green-700 active:scale-95 transition-all text-xs"
                   >
                     +
                   </button>
@@ -131,7 +132,7 @@ export default function ProductCard({ product }: ProductCardProps) {
                   <div className="flex items-center gap-2 px-1">
                     <button
                       onClick={() => decrementCartItem(currentSku, 0.25)}
-                      className="bg-white text-gray-700 font-black py-1.5 px-3 rounded-lg border border-gray-200 shadow-sm active:scale-90 transition-all"
+                      className="bg-white text-gray-700 font-black py-1.5 px-3 rounded-lg border border-gray-200 shadow-sm active:scale-90"
                     >
                       -
                     </button>
@@ -140,7 +141,7 @@ export default function ProductCard({ product }: ProductCardProps) {
                     </span>
                     <button
                       onClick={() => addToCart(product, 0.25)}
-                      className="bg-white text-gray-700 font-black py-1.5 px-3 rounded-lg border border-gray-200 shadow-sm active:scale-90 transition-all"
+                      className="bg-white text-gray-700 font-black py-1.5 px-3 rounded-lg border border-gray-200 shadow-sm active:scale-90"
                     >
                       +
                     </button>
