@@ -18,6 +18,7 @@ export default function ShoppingCart() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Lógica de horarios con margen de 45 min
   const generateTimeSlots = () => {
     const slots = [];
     const now = new Date();
@@ -46,101 +47,128 @@ export default function ShoppingCart() {
     }
   }, [deliveryDate, availableSlots]);
 
-  const total = cartTotal + (cartTotal > 0 && cartTotal < 100 ? 30 : 0);
+  // CORRECCIÓN PUNTO 2: Lógica de envío transparente
+  const shippingCost = (cartTotal > 0 && cartTotal < 100) ? 30 : 0;
+  const totalFinal = cartTotal + shippingCost;
 
   const handleCheckout = async () => {
-    if (!phone || phone.length < 10) return alert('Ingresa un teléfono de 10 dígitos.');
-    if (!deliveryTime) return alert('Selecciona una hora válida.');
+    if (!phone || phone.length < 10) return alert('Por favor ingresa tu celular a 10 dígitos.');
+    if (!deliveryTime) return alert('Selecciona una hora de entrega.');
 
     setLoading(true);
 
-    // 1. PREPARAR EL MENSAJE (Lo hacemos primero para asegurar la venta)
+    const messageDate = format(deliveryDate, 'dd/MM/yyyy');
+    
+    // MENSAJE DE WHATSAPP DESGLOSADO
     let message = `*NUEVO PEDIDO - AMOREE*\n`;
     message += `--------------------------\n`;
-    message += `📅 FECHA: ${format(deliveryDate, 'dd/MM/yyyy')}\n`;
+    message += `📅 FECHA: ${messageDate}\n`;
     message += `⏰ HORA: ${deliveryTime} hrs\n`;
     message += `📞 TEL: ${phone}\n`;
     message += `--------------------------\n`;
     cartItems.forEach(item => {
-      message += `• ${item.quantity} ${item.unidad} x ${item.nombre}\n`;
+      const sub = item.precio_venta * item.quantity;
+      message += `• ${item.quantity} ${item.unidad} x ${item.nombre} = ${formatCurrency(sub)}\n`;
     });
     message += `--------------------------\n`;
-    message += `💰 *TOTAL APROX: ${formatCurrency(total)}*\n\n`;
-    message += `_Por favor, confirma mi pedido._`;
+    if (shippingCost > 0) message += `🚚 Envío: ${formatCurrency(shippingCost)}\n`;
+    message += `💰 *TOTAL: ${formatCurrency(totalFinal)}*\n\n`;
+    message += `_Favor de confirmar el pedido._`;
 
-    // NÚMERO DE HUGO CORREGIDO SEGÚN TUS CAPTURAS
-    const whatsappUrl = `https://wa.me/522211559132?text=${encodeURIComponent(message)}`;
+    // CORRECCIÓN PUNTO 1: Número de prueba socio
+    const whatsappUrl = `https://wa.me/522215306435?text=${encodeURIComponent(message)}`;
 
     try {
-      // 2. INTENTAR GUARDAR EN SUPABASE
+      // Guardar en Supabase para que Hugo lo vea en su panel
       const { error } = await supabase.from('pedidos').insert([{
         usuario_email: user?.email || `Invitado_${phone}`,
         detalle_pedido: cartItems,
-        total: total,
+        total: totalFinal,
         estado: 'Pendiente',
-        telefono_cliente: `${phone} (Entregar: ${format(deliveryDate, 'dd/MM')} ${deliveryTime})`
+        telefono_cliente: `${phone} (Entrega: ${messageDate} ${deliveryTime})`
       }]);
 
-      if (error) {
-        console.warn('Nota: Guardado en DB falló (posible RLS), procediendo a WhatsApp...');
-      }
-      
-      // 3. SIEMPRE DISPARAR WHATSAPP (Aunque falle la DB)
+      if (error) console.warn("Error DB (RLS), pero procedemos a WhatsApp");
+
       setCartItems([]);
       window.open(whatsappUrl, '_blank');
-
     } catch (e) {
-      // Si todo falla, al menos el WhatsApp sale
-      setCartItems([]);
       window.open(whatsappUrl, '_blank');
     } finally {
       setLoading(false);
     }
   };
 
-  if (cartItems.length === 0) return <div className="p-10 text-center text-gray-400 font-bold italic">Cesta vacía</div>;
+  if (cartItems.length === 0) {
+    return (
+      <div className="p-10 text-center bg-white rounded-3xl m-4 shadow-sm border border-gray-100">
+        <p className="text-gray-400 font-bold italic text-sm uppercase">Tu canasta está vacía</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 max-w-md mx-auto bg-white rounded-3xl shadow-xl border m-2">
-      <h2 className="text-xl font-black text-green-900 mb-4 uppercase italic">Finalizar Compra</h2>
+    <div className="p-4 max-w-md mx-auto bg-white rounded-3xl shadow-2xl border border-gray-100 m-2">
+      <h2 className="text-2xl font-black text-green-900 mb-6 uppercase italic tracking-tighter">Mi Pedido</h2>
       
-      <div className="space-y-2 mb-4 max-h-40 overflow-y-auto pr-1">
+      {/* CORRECCIÓN PUNTO 3: Lista detallada con contraste */}
+      <div className="space-y-3 mb-6 max-h-72 overflow-y-auto pr-2">
         {cartItems.map((item) => (
-          <div key={item.sku} className="flex justify-between text-[11px] bg-gray-50 p-2 rounded-xl border border-gray-100">
-            <span className="font-bold text-gray-700">{item.nombre}</span>
-            <span className="text-green-700 font-black">{item.quantity} {item.unidad}</span>
+          <div key={item.sku} className="bg-gray-50 p-3 rounded-2xl border border-gray-200 relative">
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <p className="font-black text-gray-800 text-sm leading-tight mb-1">{item.nombre}</p>
+                <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">
+                  {item.quantity} {item.unidad} x {formatCurrency(item.precio_venta)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="font-black text-gray-900 text-sm">
+                  {formatCurrency(item.precio_venta * item.quantity)}
+                </p>
+                <button 
+                  onClick={() => removeFromCart(item.sku)}
+                  className="text-red-400 text-[10px] font-bold mt-1 underline"
+                >
+                  Quitar
+                </button>
+              </div>
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="bg-green-50 rounded-2xl p-4 space-y-4 border border-green-100 mb-4">
+      {/* FORMULARIO CON CONTRASTE ALTO */}
+      <div className="bg-green-50 rounded-3xl p-5 border-2 border-green-100 mb-6 space-y-4 shadow-inner">
         <div>
-          <label className="text-[10px] font-black text-green-700 uppercase mb-1 block tracking-widest">Tu Celular</label>
+          <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Número de Celular</label>
           <input 
-            type="tel" placeholder="10 dígitos" value={phone}
+            type="tel" 
+            placeholder="10 dígitos para contactarte"
+            value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="w-full rounded-xl py-2 px-4 text-sm font-bold border-0 focus:ring-2 focus:ring-green-400 outline-none"
+            className="w-full bg-white border-2 border-green-200 rounded-2xl py-3 px-4 text-sm font-black text-green-900 placeholder-green-200 focus:ring-4 focus:ring-green-100 outline-none transition-all shadow-sm"
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] font-black text-green-700 uppercase mb-1 block tracking-widest">¿Qué día?</label>
+            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Fecha</label>
             <DatePicker
               selected={deliveryDate}
               onChange={(date: Date) => setDeliveryDate(date)}
               minDate={new Date()}
               dateFormat="dd/MM/yyyy"
               locale="es"
-              className="w-full rounded-xl py-2 px-3 text-xs font-bold border-0 outline-none"
+              className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold text-gray-700 outline-none shadow-sm"
             />
           </div>
           <div>
-            <label className="text-[10px] font-black text-green-700 uppercase mb-1 block tracking-widest">¿A qué hora?</label>
+            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Hora</label>
             <select
               value={deliveryTime}
               onChange={(e) => setDeliveryTime(e.target.value)}
-              className="w-full rounded-xl py-2 px-3 text-xs font-bold border-0 outline-none"
+              className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold text-gray-700 outline-none shadow-sm"
             >
               {availableSlots.length > 0 ? (
                 availableSlots.map(slot => <option key={slot} value={slot}>{slot} hrs</option>)
@@ -152,16 +180,28 @@ export default function ShoppingCart() {
         </div>
       </div>
 
-      <div className="flex justify-between font-black text-lg text-green-800 border-t-2 border-dashed pt-3">
-        <span>TOTAL:</span>
-        <span>{formatCurrency(total)}</span>
+      {/* DESGLOSE DE TOTALES */}
+      <div className="px-2 space-y-2 mb-4">
+        <div className="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-widest">
+          <span>Subtotal:</span>
+          <span>{formatCurrency(cartTotal)}</span>
+        </div>
+        <div className="flex justify-between text-xs font-bold text-red-500 uppercase tracking-widest">
+          <span>Envío:</span>
+          <span>{shippingCost === 0 ? '¡GRATIS!' : formatCurrency(shippingCost)}</span>
+        </div>
+        <div className="flex justify-between items-center pt-2 border-t-2 border-dashed border-gray-200">
+          <span className="text-xl font-black text-green-900">TOTAL</span>
+          <span className="text-2xl font-black text-green-900 tracking-tighter">{formatCurrency(totalFinal)}</span>
+        </div>
       </div>
 
       <button 
-        onClick={handleCheckout} disabled={loading}
-        className="w-full bg-green-600 text-white font-black py-4 rounded-2xl mt-4 shadow-lg active:scale-95 transition-all text-sm uppercase tracking-widest"
+        onClick={handleCheckout} 
+        disabled={loading}
+        className="w-full bg-green-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-green-100 active:scale-95 transition-all text-sm uppercase tracking-[0.2em]"
       >
-        {loading ? 'CARGANDO...' : '✅ ENVIAR PEDIDO'}
+        {loading ? 'GENERANDO...' : '🚀 Enviar Pedido'}
       </button>
     </div>
   );
