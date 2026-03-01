@@ -1,14 +1,18 @@
-// Al principio de AdminOrders.tsx
-import Dashboard from './Dashboard';
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
+import Dashboard from './Dashboard'; // Importación del componente de reportes
 
 export default function AdminOrders() {
+  // --- ESTADOS ---
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  // PASO 2: El "Switch" para cambiar entre vista de Pedidos y Estadísticas
+  const [view, setView] = useState<'orders' | 'stats'>('orders');
 
+  // --- LÓGICA DE CARGA DE DATOS ---
   const fetchOrders = async () => {
     setRefreshing(true);
     const { data, error } = await supabase
@@ -18,7 +22,7 @@ export default function AdminOrders() {
     if (error) {
       console.error('Error:', error);
     } else if (data) {
-      // --- LÓGICA DE ORDENAMIENTO PERSONALIZADO ---
+      // Ordenamiento personalizado: Pendientes primero, luego Entregados, etc.
       const statusWeight: Record<string, number> = {
         'Pendiente': 1,
         'Entregado': 2,
@@ -30,19 +34,12 @@ export default function AdminOrders() {
         const weightA = statusWeight[a.estado] || 5;
         const weightB = statusWeight[b.estado] || 5;
 
-        // 1. Primero ordenamos por el peso del estado
         if (weightA !== weightB) {
           return weightA - weightB;
         }
 
-        // 2. Si son el mismo estado (ej. ambos Pendientes):
-        if (a.estado === 'Pendiente') {
-          // Pendientes: El más viejo arriba (Antiguo -> Reciente)
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-        }
-
-        // Para el resto: El más nuevo arriba (Reciente -> Antiguo)
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        // Si son del mismo estado (ej. Pendientes), el más viejo arriba
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       });
 
       setOrders(sorted);
@@ -51,136 +48,172 @@ export default function AdminOrders() {
     setRefreshing(false);
   };
 
-  useEffect(() => { fetchOrders(); }, []);
+  useEffect(() => {
+    fetchOrders();
+  }, []);
 
-  const handleStatusChange = async (orderId: number, newStatus: string) => {
-    // Actualización optimista para que Hugo vea el cambio de color al instante
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, estado: newStatus } : o));
-
+  // --- FUNCIONES DE GESTIÓN ---
+  const updateOrderStatus = async (orderId: number, newStatus: string) => {
     const { error } = await supabase
       .from('pedidos')
       .update({ estado: newStatus })
       .eq('id', orderId);
 
-    if (error) {
-      alert('Error al guardar en base de datos');
-      fetchOrders(); // Revertimos si falla
-    }
+    if (!error) fetchOrders();
   };
 
-  // ... (Funciones updateItemQuantity y finalizeOrder se mantienen igual)
-  const updateItemQuantity = (orderId: number, itemIndex: number, newQty: number) => {
-    const updatedOrders = orders.map(order => {
+  const updateItemQuantity = (orderId: number, itemIdx: number, newQuantity: number) => {
+    setOrders(prevOrders => prevOrders.map(order => {
       if (order.id === orderId) {
         const newDetails = [...order.detalle_pedido];
-        newDetails[itemIndex].quantity = newQty;
-        const newTotal = newDetails.reduce((sum: number, item: any) => sum + (item.precio_venta * item.quantity), 0);
+        newDetails[itemIdx] = { ...newDetails[itemIdx], quantity: newQuantity };
+        
+        // Recalcular total del pedido
+        const newTotal = newDetails.reduce((sum, item) => {
+          return sum + (item.precio_venta * item.quantity);
+        }, 0);
+
         return { ...order, detalle_pedido: newDetails, total: newTotal };
       }
       return order;
-    });
-    setOrders(updatedOrders);
+    }));
   };
 
   const finalizeOrder = async (order: any) => {
     const { error } = await supabase
       .from('pedidos')
       .update({ 
-        detalle_pedido: order.detalle_pedido, 
-        total: order.total,
-        estado: 'Entregado' 
+        estado: 'Pagado',
+        detalle_pedido: order.detalle_pedido,
+        total: order.total
       })
       .eq('id', order.id);
 
-    if (error) return alert('Error al guardar');
-
-    let ticket = `✅ *TICKET DE VENTA - AMOREE*\n`;
-    ticket += `--------------------------\n`;
-    order.detalle_pedido.forEach((item: any) => {
-      ticket += `• ${item.quantity} ${item.unidad} x ${item.nombre} = ${formatCurrency(item.precio_venta * item.quantity)}\n`;
-    });
-    ticket += `--------------------------\n`;
-    ticket += `💰 *TOTAL FINAL: ${formatCurrency(order.total)}*\n`;
-    const whatsappUrl = `https://wa.me/52${order.telefono_cliente}?text=${encodeURIComponent(ticket)}`;
-    window.open(whatsappUrl, '_blank');
-    fetchOrders();
+    if (!error) fetchOrders();
   };
 
-  if (loading) return <div className="p-10 text-center font-bold text-green-800">Cargando gestión de Amoree...</div>;
+  // --- FILTRADO DE BÚSQUEDA ---
+  const filteredOrders = orders.filter(order => 
+    order.telefono_cliente?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    order.id.toString().includes(searchTerm)
+  );
+
+  if (loading) return <div className="p-10 text-center font-bold text-green-700 animate-pulse">CARGANDO PEDIDOS...</div>;
 
   return (
-    <div className="p-4 max-w-4xl mx-auto bg-gray-50 min-h-screen pb-20">
-      <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border border-green-100">
-        <div>
-          <h1 className="text-xl font-black text-green-900 uppercase">Gestión Amoree</h1>
-          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">Prioridad: Pendientes más antiguos primero</p>
-        </div>
-        <button 
-          onClick={fetchOrders} 
-          disabled={refreshing}
-          className="text-xs font-bold px-4 py-2 rounded-full bg-green-100 text-green-700 hover:bg-green-200"
-        >
-          {refreshing ? '🔄 Ordenando...' : '🔄 Refrescar'}
-        </button>
-      </div>
+    <div className="p-4 md:p-8 bg-gray-50 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+          <h1 className="text-3xl font-black text-gray-900 tracking-tighter italic uppercase">
+            Panel <span className="text-green-600">Admin</span>
+          </h1>
 
-      <div className="space-y-6">
-        {orders.map(order => (
-          <div key={order.id} className={`bg-white rounded-2xl p-5 shadow-md border-l-8 transition-all ${
-            order.estado === 'Pendiente' ? 'border-yellow-400' : 
-            order.estado === 'Pagado' ? 'border-blue-500' : 
-            order.estado === 'Cancelado' ? 'border-red-400' : 'border-green-500'
-          }`}>
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <span className="text-[10px] font-bold text-gray-400 block tracking-widest uppercase">ID: #{order.id} - {new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                <span className="text-sm font-black text-gray-700 flex items-center gap-1">
-                  📞 {order.telefono_cliente || 'Sin teléfono'}
-                </span>
-              </div>
-              
-              <select 
-                value={order.estado || 'Pendiente'}
-                onChange={(e) => handleStatusChange(order.id, e.target.value)}
-                className={`text-[10px] font-black py-1 px-3 rounded-full border-2 transition-colors cursor-pointer outline-none ${
-                  order.estado === 'Pendiente' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' :
-                  order.estado === 'Entregado' ? 'bg-green-50 text-green-600 border-green-200' :
-                  order.estado === 'Pagado' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                  'bg-red-50 text-red-600 border-red-200'
-                }`}
-              >
-                <option value="Pendiente">⏳ PENDIENTE</option>
-                <option value="Entregado">🚚 ENTREGADO</option>
-                <option value="Pagado">💰 PAGADO</option>
-                <option value="Cancelado">❌ CANCELADO</option>
-              </select>
+          {/* PASO 3: Selector de Vista (Pedidos vs Estadísticas) */}
+          <div className="flex bg-gray-200 p-1 rounded-2xl shadow-inner">
+            <button
+              onClick={() => setView('orders')}
+              className={`px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                view === 'orders' 
+                ? 'bg-white text-green-700 shadow-sm' 
+                : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📦 Pedidos
+            </button>
+            <button
+              onClick={() => setView('stats')}
+              className={`px-6 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                view === 'stats' 
+                ? 'bg-green-600 text-white shadow-md' 
+                : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📊 Estadísticas
+            </button>
+          </div>
+        </div>
+
+        {/* PASO 4: Renderizado Condicional */}
+        {view === 'orders' ? (
+          <>
+            {/* Buscador de Pedidos */}
+            <div className="mb-6">
+              <input
+                type="text"
+                placeholder="🔍 Buscar por teléfono o ID..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-white border-2 border-gray-100 rounded-2xl py-3 px-6 text-sm font-bold shadow-sm focus:ring-4 focus:ring-green-100 outline-none transition-all"
+              />
             </div>
 
-            <div className="space-y-2 bg-gray-50 rounded-xl p-3 border border-gray-100">
-              {order.detalle_pedido?.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span className="flex-1 font-bold text-gray-600">{item.nombre}</span>
-                  <input 
-                    type="number" step="0.001" value={item.quantity}
-                    onChange={(e) => updateItemQuantity(order.id, idx, parseFloat(e.target.value))}
-                    className="w-20 border border-gray-200 bg-white rounded py-1 text-center font-black text-green-700 focus:ring-2 focus:ring-green-400 outline-none"
-                  />
-                  <span className="text-gray-400 font-bold w-12">{item.unidad}</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredOrders.map((order) => (
+                <div key={order.id} className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+                  {/* Cabecera del Pedido */}
+                  <div className={`p-4 ${
+                    order.estado === 'Pendiente' ? 'bg-orange-50 border-b border-orange-100' :
+                    order.estado === 'Pagado' ? 'bg-green-50 border-b border-green-100' : 'bg-gray-50 border-b'
+                  }`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">ID: #{order.id}</span>
+                      <select 
+                        value={order.estado}
+                        onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                        className="text-[10px] font-bold uppercase bg-white border rounded-lg px-2 py-1 outline-none"
+                      >
+                        <option value="Pendiente">Pendiente</option>
+                        <option value="Entregado">Entregado</option>
+                        <option value="Pagado">Pagado</option>
+                        <option value="Cancelado">Cancelado</option>
+                      </select>
+                    </div>
+                    <p className="font-black text-gray-800">{order.telefono_cliente}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">{new Date(order.created_at).toLocaleString()}</p>
+                  </div>
+
+                  {/* Detalle de Productos (Editables para peso real) */}
+                  <div className="p-4 flex-1 space-y-3">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Productos:</p>
+                    <div className="space-y-2">
+                      {order.detalle_pedido?.map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
+                          <span className="flex-1 font-bold text-[11px] text-gray-700 leading-tight">{item.nombre}</span>
+                          <input 
+                            type="number" 
+                            step="0.001" 
+                            value={item.quantity}
+                            onChange={(e) => updateItemQuantity(order.id, idx, parseFloat(e.target.value))}
+                            className="w-16 border-2 border-green-200 bg-white rounded-lg py-1 text-center font-black text-green-700 text-xs focus:ring-2 focus:ring-green-400 outline-none"
+                          />
+                          <span className="text-[9px] font-black text-gray-400 w-8 uppercase">{item.unidad}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Acciones Finales */}
+                  <div className="p-4 bg-gray-50 border-t border-gray-100 mt-auto">
+                    <div className="flex justify-between items-center mb-4">
+                      <span className="text-xs font-bold text-gray-400 uppercase">Total:</span>
+                      <span className="text-xl font-black text-gray-900">{formatCurrency(order.total)}</span>
+                    </div>
+                    {order.estado !== 'Pagado' && (
+                      <button 
+                        onClick={() => finalizeOrder(order)}
+                        className="w-full bg-green-600 text-white py-3 rounded-2xl font-black text-[11px] uppercase tracking-widest shadow-lg shadow-green-100 hover:bg-green-700 transition-all"
+                      >
+                        Finalizar y Cobrar
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
-
-            <div className="mt-4 flex justify-between items-center pt-2">
-              <span className="text-xl font-black text-gray-800 tracking-tighter">{formatCurrency(order.total)}</span>
-              <button 
-                onClick={() => finalizeOrder(order)}
-                className="bg-green-600 text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-green-100 hover:bg-green-700 active:scale-95 transition-all"
-              >
-                Confirmar y Ticket
-              </button>
-            </div>
-          </div>
-        ))}
+          </>
+        ) : (
+          <Dashboard /> // Muestra el componente de estadísticas
+        )}
       </div>
     </div>
   );
