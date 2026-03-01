@@ -1,3 +1,5 @@
+// Al principio de AdminOrders.tsx
+import Dashboard from './Dashboard';
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
