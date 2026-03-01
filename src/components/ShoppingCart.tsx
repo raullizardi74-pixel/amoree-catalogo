@@ -18,23 +18,20 @@ export default function ShoppingCart() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // --- LÓGICA DE HORARIOS INTELIGENTES ---
+  // Generador de horarios con margen de 45 min
   const generateTimeSlots = () => {
     const slots = [];
     const now = new Date();
-    const preparationMargin = addMinutes(now, 45); // Margen de 45 minutos
+    const preparationMargin = addMinutes(now, 45);
     
     for (let hour = 8; hour <= 19; hour++) {
       for (let minute of ['00', '30']) {
         const slotTime = setMinutes(setHours(new Date(deliveryDate), hour), parseInt(minute));
-        
-        // Si la fecha seleccionada es HOY, filtramos las horas pasadas + margen
         if (isSameDay(deliveryDate, now)) {
           if (slotTime > preparationMargin) {
             slots.push(`${hour.toString().padStart(2, '0')}:${minute}`);
           }
         } else {
-          // Si es otro día, mostramos todas las opciones
           slots.push(`${hour.toString().padStart(2, '0')}:${minute}`);
         }
       }
@@ -44,167 +41,120 @@ export default function ShoppingCart() {
 
   const availableSlots = generateTimeSlots();
 
-  // Actualizar la hora seleccionada por defecto si la actual queda fuera de rango
   useEffect(() => {
-    if (availableSlots.length > 0 && !availableSlots.includes(deliveryTime)) {
+    if (availableSlots.length > 0 && (!deliveryTime || !availableSlots.includes(deliveryTime))) {
       setDeliveryTime(availableSlots[0]);
-    } else if (availableSlots.length === 0) {
-      setDeliveryTime('');
     }
   }, [deliveryDate, availableSlots]);
 
-  const shippingCost = cartTotal > 0 && cartTotal < 100 ? 30 : 0;
-  const total = cartTotal + shippingCost;
+  const total = cartTotal + (cartTotal > 0 && cartTotal < 100 ? 30 : 0);
 
   const handleCheckout = async () => {
-    if (!phone || phone.length < 10) {
-      alert('Por favor, ingresa un número de teléfono válido.');
-      return;
-    }
-
-    if (availableSlots.length === 0 && isSameDay(deliveryDate, new Date())) {
-      alert('Amoree ya no acepta más pedidos por hoy debido al horario de cierre. Por favor selecciona otra fecha.');
-      return;
-    }
-
-    if (!deliveryTime) {
-      alert('Por favor selecciona una hora de entrega válida.');
-      return;
-    }
+    if (!phone || phone.length < 10) return alert('Ingresa un teléfono válido.');
+    if (!deliveryTime) return alert('Selecciona una hora válida.');
 
     setLoading(true);
     try {
+      // NOTA: Para no dar error en Supabase si no has creado las columnas, 
+      // enviamos la fecha/hora como parte de un objeto de metadatos o texto
       const orderDetails = {
         usuario_email: user?.email || 'Invitado',
-        detalle_pedido: cartItems,
+        detalle_pedido: cartItems, // Aquí van los productos
         total: total,
         estado: 'Pendiente',
-        telefono_cliente: phone,
-        fecha_entrega: format(deliveryDate, 'yyyy-MM-dd'),
-        hora_entrega: deliveryTime
+        telefono_cliente: `${phone} (Entrega: ${format(deliveryDate, 'dd/MM')} ${deliveryTime}hs)`
       };
 
       const { error } = await supabase.from('pedidos').insert([orderDetails]);
-      if (error) throw error;
+      
+      if (error) {
+        console.error('Error Supabase:', error);
+        throw new Error('No se pudo guardar en la base de datos');
+      }
 
-      // Generar mensaje de WhatsApp
+      // 2. DISPARAR WHATSAPP (Esto es lo que más le importa a Hugo)
       let message = `*NUEVO PEDIDO - AMOREE*\n`;
       message += `--------------------------\n`;
-      message += `📅 Fecha: ${format(deliveryDate, 'dd/MM/yyyy')}\n`;
-      message += `⏰ Hora: ${deliveryTime} hrs\n`;
-      message += `📞 Tel: ${phone}\n`;
+      message += `📅 FECHA: ${format(deliveryDate, 'dd/MM/yyyy')}\n`;
+      message += `⏰ HORA: ${deliveryTime} hrs\n`;
+      message += `📞 TEL: ${phone}\n`;
       message += `--------------------------\n`;
       cartItems.forEach(item => {
         message += `• ${item.quantity} ${item.unidad} x ${item.nombre}\n`;
       });
       message += `--------------------------\n`;
-      message += `💰 *TOTAL: ${formatCurrency(total)}*\n`;
+      message += `💰 *TOTAL APROX: ${formatCurrency(total)}*\n\n`;
+      message += `_Por favor, confirma que recibiste mi pedido._`;
       
       const whatsappUrl = `https://wa.me/522211559132?text=${encodeURIComponent(message)}`;
-      window.open(whatsappUrl, '_blank');
+      
+      // Limpiar carrito y redirigir
       setCartItems([]);
+      window.open(whatsappUrl, '_blank');
+
     } catch (error) {
-      console.error(error);
-      alert('Error al procesar el pedido.');
+      alert('Hubo un problema al generar el pedido. Revisa tu conexión.');
     } finally {
       setLoading(false);
     }
   };
 
-  if (cartItems.length === 0) {
-    return (
-      <div className="p-8 text-center bg-white rounded-3xl shadow-sm border border-gray-100 mx-4 mt-4">
-        <p className="text-gray-400 font-bold italic uppercase text-xs tracking-widest">Tu canasta Amoree está vacía</p>
-      </div>
-    );
-  }
+  if (cartItems.length === 0) return <div className="p-8 text-center text-gray-400 italic">Canasta vacía</div>;
 
   return (
-    <div className="p-4 max-w-md mx-auto bg-white rounded-3xl shadow-2xl border border-gray-100 m-4">
-      <h2 className="text-xl font-black text-green-900 mb-4 uppercase italic tracking-tighter">Tu Pedido</h2>
+    <div className="p-4 max-w-md mx-auto bg-white rounded-3xl shadow-xl border m-4">
+      <h2 className="text-xl font-black text-green-900 mb-4 uppercase italic">Tu Pedido</h2>
       
-      <div className="space-y-3 mb-6 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+      {/* Lista de productos reducida para ahorrar espacio */}
+      <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
         {cartItems.map((item) => (
-          <div key={item.sku} className="flex justify-between items-center bg-gray-50 p-3 rounded-2xl border border-gray-100">
-            <div className="flex-1">
-              <p className="font-bold text-gray-800 text-sm">{item.nombre}</p>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                {item.quantity} {item.unidad} x {formatCurrency(item.precio_venta)}
-              </p>
-            </div>
-            <button 
-              onClick={() => removeFromCart(item.sku)}
-              className="text-red-400 hover:text-red-600 p-2"
-            >
-              ✕
-            </button>
+          <div key={item.sku} className="flex justify-between text-xs bg-gray-50 p-2 rounded-xl">
+            <span>{item.nombre} ({item.quantity} {item.unidad})</span>
+            <button onClick={() => removeFromCart(item.sku)} className="text-red-400">✕</button>
           </div>
         ))}
       </div>
 
-      <div className="bg-green-50 rounded-2xl p-4 space-y-4 border border-green-100 mb-6">
-        <div>
-          <label className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1 block">Teléfono de Contacto</label>
-          <input 
-            type="tel" 
-            placeholder="Ej: 2221234567"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-white border-0 rounded-xl py-2 px-4 text-sm font-bold focus:ring-2 focus:ring-green-400 outline-none"
-          />
-        </div>
+      <div className="bg-green-50 rounded-2xl p-4 space-y-3 border border-green-100 mb-4">
+        <input 
+          type="tel" placeholder="Tu Teléfono (10 dígitos)" value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className="w-full rounded-xl py-2 px-4 text-sm font-bold outline-none"
+        />
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1 block">Fecha</label>
-            <DatePicker
-              selected={deliveryDate}
-              onChange={(date: Date) => setDeliveryDate(date)}
-              minDate={new Date()}
-              dateFormat="dd/MM/yyyy"
-              locale="es"
-              className="w-full bg-white border-0 rounded-xl py-2 px-3 text-sm font-bold focus:ring-2 focus:ring-green-400 outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1 block">Hora Estimada</label>
-            <select
-              value={deliveryTime}
-              onChange={(e) => setDeliveryTime(e.target.value)}
-              disabled={availableSlots.length === 0}
-              className="w-full bg-white border-0 rounded-xl py-2 px-3 text-sm font-bold focus:ring-2 focus:ring-green-400 outline-none disabled:bg-gray-100 disabled:text-gray-400"
-            >
-              {availableSlots.length > 0 ? (
-                availableSlots.map(slot => (
-                  <option key={slot} value={slot}>{slot} hrs</option>
-                ))
-              ) : (
-                <option value="">Cerrado</option>
-              )}
-            </select>
-          </div>
+        <div className="grid grid-cols-2 gap-2">
+          <DatePicker
+            selected={deliveryDate}
+            onChange={(date: Date) => setDeliveryDate(date)}
+            minDate={new Date()}
+            dateFormat="dd/MM/yyyy"
+            locale="es"
+            className="w-full rounded-xl py-2 px-3 text-xs font-bold outline-none"
+          />
+          <select
+            value={deliveryTime}
+            onChange={(e) => setDeliveryTime(e.target.value)}
+            className="w-full rounded-xl py-2 px-3 text-xs font-bold outline-none"
+          >
+            {availableSlots.length > 0 ? (
+              availableSlots.map(slot => <option key={slot} value={slot}>{slot} hrs</option>)
+            ) : (
+              <option value="">Cerrado</option>
+            )}
+          </select>
         </div>
-        
-        {availableSlots.length === 0 && isSameDay(deliveryDate, new Date()) && (
-          <p className="text-[9px] text-red-500 font-black uppercase text-center animate-pulse">
-            ⚠️ Horario límite alcanzado para hoy
-          </p>
-        )}
       </div>
 
-      <div className="pt-3 border-t-2 border-dashed border-gray-100 space-y-1">
-        <div className="flex justify-between font-black text-lg text-green-800">
-          <span>TOTAL APROX.</span>
-          <span>{formatCurrency(total)}</span>
-        </div>
+      <div className="flex justify-between font-black text-lg text-green-800 border-t border-dashed pt-3">
+        <span>TOTAL:</span>
+        <span>{formatCurrency(total)}</span>
       </div>
 
       <button 
-        onClick={handleCheckout} 
-        disabled={loading}
-        className="w-full bg-green-600 text-white font-extrabold py-3 px-4 rounded-xl mt-4 hover:bg-green-700 shadow-lg shadow-green-100 transition-all flex items-center justify-center gap-2 disabled:bg-gray-300"
+        onClick={handleCheckout} disabled={loading}
+        className="w-full bg-green-600 text-white font-black py-4 rounded-2xl mt-4 shadow-lg active:scale-95 transition-all"
       >
-        {loading ? 'PROCESANDO...' : 'ENVIAR PEDIDO A AMOREE'}
+        {loading ? 'PROCESANDO...' : '🚀 ENVIAR PEDIDO'}
       </button>
     </div>
   );
