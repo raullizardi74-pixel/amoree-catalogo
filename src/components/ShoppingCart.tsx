@@ -18,7 +18,6 @@ export default function ShoppingCart() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Lógica de horarios con margen de 45 min
   const generateTimeSlots = () => {
     const slots = [];
     const now = new Date();
@@ -47,7 +46,6 @@ export default function ShoppingCart() {
     }
   }, [deliveryDate, availableSlots]);
 
-  // CORRECCIÓN PUNTO 2: Lógica de envío transparente
   const shippingCost = (cartTotal > 0 && cartTotal < 100) ? 30 : 0;
   const totalFinal = cartTotal + shippingCost;
 
@@ -59,7 +57,7 @@ export default function ShoppingCart() {
 
     const messageDate = format(deliveryDate, 'dd/MM/yyyy');
     
-    // MENSAJE DE WHATSAPP DESGLOSADO
+    // MENSAJE DE WHATSAPP CON LEYENDA DE PESO REAL
     let message = `*NUEVO PEDIDO - AMOREE*\n`;
     message += `--------------------------\n`;
     message += `📅 FECHA: ${messageDate}\n`;
@@ -72,23 +70,20 @@ export default function ShoppingCart() {
     });
     message += `--------------------------\n`;
     if (shippingCost > 0) message += `🚚 Envío: ${formatCurrency(shippingCost)}\n`;
-    message += `💰 *TOTAL: ${formatCurrency(totalFinal)}*\n\n`;
+    message += `💰 *TOTAL APROX: ${formatCurrency(totalFinal)}*\n\n`;
+    message += `⚠️ *NOTA:* Amoree preparará tu pedido y confirmará el total final en base al peso real de la báscula al momento de surtir.\n\n`;
     message += `_Favor de confirmar el pedido._`;
 
-    // CORRECCIÓN PUNTO 1: Número de prueba socio
     const whatsappUrl = `https://wa.me/522215306435?text=${encodeURIComponent(message)}`;
 
     try {
-      // Guardar en Supabase para que Hugo lo vea en su panel
-      const { error } = await supabase.from('pedidos').insert([{
+      await supabase.from('pedidos').insert([{
         usuario_email: user?.email || `Invitado_${phone}`,
         detalle_pedido: cartItems,
         total: totalFinal,
         estado: 'Pendiente',
         telefono_cliente: `${phone} (Entrega: ${messageDate} ${deliveryTime})`
       }]);
-
-      if (error) console.warn("Error DB (RLS), pero procedemos a WhatsApp");
 
       setCartItems([]);
       window.open(whatsappUrl, '_blank');
@@ -99,108 +94,75 @@ export default function ShoppingCart() {
     }
   };
 
-  if (cartItems.length === 0) {
-    return (
-      <div className="p-10 text-center bg-white rounded-3xl m-4 shadow-sm border border-gray-100">
-        <p className="text-gray-400 font-bold italic text-sm uppercase">Tu canasta está vacía</p>
-      </div>
-    );
-  }
+  if (cartItems.length === 0) return <div className="p-10 text-center text-gray-400 font-bold italic uppercase">Tu canasta está vacía</div>;
 
   return (
     <div className="p-4 max-w-md mx-auto bg-white rounded-3xl shadow-2xl border border-gray-100 m-2">
       <h2 className="text-2xl font-black text-green-900 mb-6 uppercase italic tracking-tighter">Mi Pedido</h2>
       
-      {/* CORRECCIÓN PUNTO 3: Lista detallada con contraste */}
       <div className="space-y-3 mb-6 max-h-72 overflow-y-auto pr-2">
         {cartItems.map((item) => (
-          <div key={item.sku} className="bg-gray-50 p-3 rounded-2xl border border-gray-200 relative">
+          <div key={item.sku} className="bg-gray-50 p-3 rounded-2xl border border-gray-200">
             <div className="flex justify-between items-start">
               <div className="flex-1">
-                <p className="font-black text-gray-800 text-sm leading-tight mb-1">{item.nombre}</p>
+                <p className="font-black text-gray-800 text-sm leading-tight">{item.nombre}</p>
                 <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">
                   {item.quantity} {item.unidad} x {formatCurrency(item.precio_venta)}
                 </p>
               </div>
-              <div className="text-right">
-                <p className="font-black text-gray-900 text-sm">
-                  {formatCurrency(item.precio_venta * item.quantity)}
-                </p>
-                <button 
-                  onClick={() => removeFromCart(item.sku)}
-                  className="text-red-400 text-[10px] font-bold mt-1 underline"
-                >
-                  Quitar
-                </button>
-              </div>
+              <p className="font-black text-gray-900 text-sm">{formatCurrency(item.precio_venta * item.quantity)}</p>
             </div>
           </div>
         ))}
       </div>
 
-      {/* FORMULARIO CON CONTRASTE ALTO */}
-      <div className="bg-green-50 rounded-3xl p-5 border-2 border-green-100 mb-6 space-y-4 shadow-inner">
+      <div className="bg-green-50 rounded-3xl p-5 border-2 border-green-100 mb-6 space-y-4">
         <div>
-          <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Número de Celular</label>
+          <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1 block">Tu Celular</label>
           <input 
-            type="tel" 
-            placeholder="10 dígitos para contactarte"
-            value={phone}
+            type="tel" placeholder="10 dígitos" value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-white border-2 border-green-200 rounded-2xl py-3 px-4 text-sm font-black text-green-900 placeholder-green-200 focus:ring-4 focus:ring-green-100 outline-none transition-all shadow-sm"
+            className="w-full bg-white border-2 border-green-200 rounded-2xl py-3 px-4 text-sm font-black outline-none"
           />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Fecha</label>
-            <DatePicker
-              selected={deliveryDate}
-              onChange={(date: Date) => setDeliveryDate(date)}
-              minDate={new Date()}
-              dateFormat="dd/MM/yyyy"
-              locale="es"
-              className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold text-gray-700 outline-none shadow-sm"
-            />
+            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1 block">Fecha</label>
+            <DatePicker selected={deliveryDate} onChange={(date: Date) => setDeliveryDate(date)} minDate={new Date()} dateFormat="dd/MM/yyyy" locale="es" className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold outline-none" />
           </div>
           <div>
-            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1.5 block ml-1">Hora</label>
-            <select
-              value={deliveryTime}
-              onChange={(e) => setDeliveryTime(e.target.value)}
-              className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold text-gray-700 outline-none shadow-sm"
-            >
-              {availableSlots.length > 0 ? (
-                availableSlots.map(slot => <option key={slot} value={slot}>{slot} hrs</option>)
-              ) : (
-                <option value="">Cerrado</option>
-              )}
+            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1 block">Hora</label>
+            <select value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold outline-none">
+              {availableSlots.length > 0 ? availableSlots.map(slot => <option key={slot} value={slot}>{slot} hrs</option>) : <option value="">Cerrado</option>}
             </select>
           </div>
         </div>
       </div>
 
-      {/* DESGLOSE DE TOTALES */}
       <div className="px-2 space-y-2 mb-4">
-        <div className="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-widest">
+        <div className="flex justify-between text-xs font-bold text-gray-500 uppercase">
           <span>Subtotal:</span>
           <span>{formatCurrency(cartTotal)}</span>
         </div>
-        <div className="flex justify-between text-xs font-bold text-red-500 uppercase tracking-widest">
+        <div className="flex justify-between text-xs font-bold text-red-500 uppercase">
           <span>Envío:</span>
           <span>{shippingCost === 0 ? '¡GRATIS!' : formatCurrency(shippingCost)}</span>
         </div>
         <div className="flex justify-between items-center pt-2 border-t-2 border-dashed border-gray-200">
           <span className="text-xl font-black text-green-900">TOTAL</span>
-          <span className="text-2xl font-black text-green-900 tracking-tighter">{formatCurrency(totalFinal)}</span>
+          <span className="text-2xl font-black text-green-900">{formatCurrency(totalFinal)}</span>
+        </div>
+        
+        {/* LEYENDA DE ADVERTENCIA */}
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-2 mt-4">
+          <p className="text-[9px] text-yellow-700 font-bold leading-tight text-center">
+             ⚠️ Amoree preparará tu pedido y confirmará el total final en base al peso real de la báscula.
+          </p>
         </div>
       </div>
 
-      <button 
-        onClick={handleCheckout} 
-        disabled={loading}
-        className="w-full bg-green-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-green-100 active:scale-95 transition-all text-sm uppercase tracking-[0.2em]"
-      >
+      <button onClick={handleCheckout} disabled={loading} className="w-full bg-green-600 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 transition-all text-sm uppercase tracking-widest">
         {loading ? 'GENERANDO...' : '🚀 Enviar Pedido'}
       </button>
     </div>
