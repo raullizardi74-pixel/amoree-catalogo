@@ -11,25 +11,38 @@ export default function ClientsModule() {
   const [montoAbono, setMontoAbono] = useState('');
   const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '', email: '' });
 
-  useEffect(() => { fetchClientes(); }, []);
-
+  // 1. CARGAR DATOS
   const fetchClientes = async () => {
     const { data } = await supabase.from('clientes').select('*').order('saldo_deudor', { ascending: false });
     if (data) setClientes(data);
     setLoading(false);
   };
 
- const handleRegistrarAbono = async () => {
+  useEffect(() => { fetchClientes(); }, []);
+
+  // 2. AGREGAR NUEVO CLIENTE
+  const handleAddCliente = async () => {
+    const { error } = await supabase.from('clientes').insert([nuevoCliente]);
+    if (!error) {
+      setShowAdd(false);
+      setNuevoCliente({ nombre: '', telefono: '', email: '' });
+      fetchClientes();
+    }
+  };
+
+  // 3. REGISTRAR ABONO (UNA SOLA VEZ)
+  const handleRegistrarAbono = async () => {
     const monto = parseFloat(montoAbono);
     if (isNaN(monto) || !clienteSeleccionado) return;
 
-    const { error } = await supabase.rpc('registrar_abono', { 
+    // Ejecutamos la función de balance en la DB
+    const { error: errorAbono } = await supabase.rpc('registrar_abono', { 
       client_id: clienteSeleccionado.id, 
       monto: monto 
     });
 
-    if (!error) {
-      // REGISTRO DEL PEDIDO TIPO ABONO
+    if (!errorAbono) {
+      // Registramos el movimiento en la tabla de pedidos para que sume al Dashboard
       await supabase.from('pedidos').insert([{
         telefono_cliente: `ABONO: ${clienteSeleccionado.nombre}`,
         total: monto,
@@ -37,50 +50,30 @@ export default function ClientsModule() {
         origen: 'Mostrador',
         metodo_pago: 'Efectivo',
         cliente_id: clienteSeleccionado.id,
-        detalle_pedido: [] // <--- CAMBIO VITAL: Evita que sea null
+        detalle_pedido: [] // Importante: Lista vacía para evitar crash en Logística
       }]);
 
       setShowAbono(false);
       setMontoAbono('');
       fetchClientes();
+      alert('✅ Saldo actualizado y abono registrado.');
+    } else {
+      alert('Error al registrar el abono.');
     }
   };
 
-  const handleRegistrarAbono = async () => {
-    const monto = parseFloat(montoAbono);
-    if (isNaN(monto) || !clienteSeleccionado) return;
-
-    const { error } = await supabase.rpc('registrar_abono', { 
-      client_id: clienteSeleccionado.id, 
-      monto: monto 
-    });
-
-    if (!error) {
-      // También registramos el abono como un "pedido" de tipo Abono para que aparezca en el Dashboard
-      await supabase.from('pedidos').insert([{
-        telefono_cliente: `ABONO: ${clienteSeleccionado.nombre}`,
-        total: monto,
-        estado: 'Pagado',
-        origen: 'Mostrador',
-        metodo_pago: 'Efectivo',
-        cliente_id: clienteSeleccionado.id
-      }]);
-
-      setShowAbono(false);
-      setMontoAbono('');
-      fetchClientes();
-      alert('✅ Abono registrado y saldo actualizado');
-    }
-  };
-
-  if (loading) return <div className="p-10 text-center font-black animate-pulse">CARGANDO CARTERA...</div>;
+  if (loading) return (
+    <div className="p-10 text-center font-black animate-pulse text-blue-600 uppercase tracking-widest">
+      Actualizando Cartera...
+    </div>
+  );
 
   return (
     <div className="p-4 md:p-8 space-y-8 animate-in fade-in duration-500 pb-20">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-black italic uppercase tracking-tighter">Cartera de <span className="text-blue-600">Clientes</span></h2>
-          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Gestión de Cobranza Amoree</p>
+          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Control de Cuentas por Cobrar</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
@@ -119,7 +112,7 @@ export default function ClientsModule() {
         ))}
       </div>
 
-      {/* MODAL PARA ABONAR */}
+      {/* MODAL ABONO */}
       {showAbono && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[80] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95">
@@ -127,40 +120,36 @@ export default function ClientsModule() {
               <p className="text-[10px] font-black text-blue-600 uppercase mb-2">Registrar Pago</p>
               <h3 className="text-2xl font-black uppercase italic leading-tight">{clienteSeleccionado?.nombre}</h3>
             </div>
-            
-            <div className="bg-gray-50 p-6 rounded-3xl mb-8 text-center border border-gray-100">
+            <div className="bg-gray-50 p-6 rounded-3xl mb-8 text-center">
                <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Saldo Actual</p>
                <p className="text-2xl font-black text-red-600">{formatCurrency(clienteSeleccionado?.saldo_deudor)}</p>
             </div>
-
             <input 
-              type="number"
-              placeholder="¿CUÁNTO VA A PAGAR?"
-              className="w-full p-5 rounded-2xl bg-gray-100 font-black text-center text-xl border-0 outline-none focus:ring-4 focus:ring-green-100 mb-8"
+              type="number" placeholder="MONTO DEL ABONO"
+              className="w-full p-5 rounded-2xl bg-gray-100 font-black text-center text-xl outline-none focus:ring-4 focus:ring-green-100 mb-8"
               value={montoAbono}
               onChange={e => setMontoAbono(e.target.value)}
             />
-
             <div className="flex flex-col gap-3">
-               <button onClick={handleRegistrarAbono} className="w-full bg-green-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-green-100 active:scale-95 transition-all">Confirmar Abono</button>
+               <button onClick={handleRegistrarAbono} className="w-full bg-green-600 text-white py-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl">Confirmar Abono</button>
                <button onClick={() => setShowAbono(false)} className="w-full py-2 font-black uppercase text-[9px] text-gray-400">Cerrar</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL ALTA CLIENTE (Se mantiene igual) */}
+      {/* MODAL NUEVO CLIENTE */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[70] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-[3rem] p-10 shadow-2xl">
-            <h3 className="text-2xl font-black uppercase italic mb-8">Nuevo Cliente Amoree</h3>
+            <h3 className="text-2xl font-black uppercase italic mb-8">Nuevo Cliente</h3>
             <div className="space-y-4">
               <input placeholder="Nombre Completo" className="w-full p-4 rounded-2xl bg-gray-50 font-bold border-0" onChange={e => setNuevoCliente({...nuevoCliente, nombre: e.target.value})} />
               <input placeholder="Teléfono" className="w-full p-4 rounded-2xl bg-gray-50 font-bold border-0" onChange={e => setNuevoCliente({...nuevoCliente, telefono: e.target.value})} />
             </div>
             <div className="flex gap-4 mt-8">
                <button onClick={() => setShowAdd(false)} className="flex-1 font-black text-[10px] uppercase text-gray-400">Cancelar</button>
-               <button onClick={handleAddCliente} className="flex-[2] bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-blue-100">Guardar</button>
+               <button onClick={handleAddCliente} className="flex-[2] bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase shadow-lg">Guardar</button>
             </div>
           </div>
         </div>
