@@ -22,7 +22,12 @@ export default function AdminOrders() {
         'Finalizado': 4,
         'Cancelado': 5
       };
-      const sorted = data.sort((a, b) => (statusWeight[a.estado] || 6) - (statusWeight[b.estado] || 6));
+      const sorted = data.sort((a, b) => {
+        const weightA = statusWeight[a.estado] || 6;
+        const weightB = statusWeight[b.estado] || 6;
+        if (weightA !== weightB) return weightA - weightB;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
       setOrders(sorted);
     }
     setLoading(false);
@@ -30,7 +35,58 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  // --- LÓGICA DE ACTUALIZACIÓN ---
+  // --- FUNCIÓN MAESTRA: CONSTRUIR TICKET Y ENVIAR WHATSAPP ---
+  const sendDigitalTicket = async (order: any) => {
+    // 1. Limpieza de teléfono
+    const rawPhone = order.telefono_cliente.split(' ')[0].replace(/\D/g, '');
+    const cleanPhone = rawPhone.length === 10 ? `52${rawPhone}` : rawPhone;
+
+    // 2. DATOS BANCARIOS AMOREE
+    const datosBancarios = {
+      banco: "BBVA / BANCOPPEL",
+      nombre: "HUGO [APELLIDO]",
+      clabe: "0123 4567 8901 2345 67",
+      tarjeta: "4152 0000 0000 0000"
+    };
+
+    // 3. Construcción del Mensaje con pesos actualizados
+    let ticket = `*TICKET DIGITAL - AMOREE* ✅\n`;
+    ticket += `_Tu pedido ya está pesado y listo_\n`;
+    ticket += `--------------------------\n`;
+    order.detalle_pedido.forEach((item: any) => {
+      const subtotal = item.precio_venta * item.quantity;
+      ticket += `• ${item.quantity.toFixed(3)} ${item.unidad} x ${item.nombre} = ${formatCurrency(subtotal)}\n`;
+    });
+    ticket += `--------------------------\n`;
+    ticket += `💰 *TOTAL A PAGAR: ${formatCurrency(order.total)}*\n\n`;
+    
+    ticket += `*DATOS PARA TRANSFERENCIA:* 🏦\n`;
+    ticket += `• *Banco:* ${datosBancarios.banco}\n`;
+    ticket += `• *A nombre de:* ${datosBancarios.nombre}\n`;
+    ticket += `• *CLABE:* \`${datosBancarios.clabe}\` (Toca para copiar)\n`;
+    ticket += `• *Tarjeta:* \`${datosBancarios.tarjeta}\`\n\n`;
+    
+    ticket += `_Por favor, envía tu comprobante por aquí para liberar el envío._ 🥑`;
+
+    // 4. Actualizar estado en Supabase
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ 
+        estado: 'Pendiente de Pago',
+        detalle_pedido: order.detalle_pedido,
+        total: order.total 
+      })
+      .eq('id', order.id);
+
+    if (!error) {
+      const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(ticket)}`;
+      window.open(waUrl, '_blank');
+      fetchOrders();
+    } else {
+      alert('Error al actualizar el estado del pedido');
+    }
+  };
+
   const updateStatus = async (orderId: number, nextStatus: string) => {
     const { error } = await supabase.from('pedidos').update({ estado: nextStatus }).eq('id', orderId);
     if (!error) fetchOrders();
@@ -48,7 +104,6 @@ export default function AdminOrders() {
     }));
   };
 
-  // --- FILTRADO INTELIGENTE ---
   const filteredOrders = orders.filter(o => {
     const matchesSearch = o.telefono_cliente?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'Todos' || o.estado === statusFilter;
@@ -76,25 +131,16 @@ export default function AdminOrders() {
           <>
             {/* PANEL DE FILTROS */}
             <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-200 mb-8 space-y-4">
-              <div className="relative">
-                <input 
-                  type="text" placeholder="🔍 Buscar por celular o ID..." value={searchTerm} 
-                  onChange={e => setSearchTerm(e.target.value)} 
-                  className="w-full pl-12 pr-4 py-3 rounded-2xl bg-gray-50 border-0 font-bold focus:ring-4 focus:ring-green-100 transition-all outline-none"
-                />
-                <span className="absolute left-4 top-3.5 opacity-30 text-xl">🔍</span>
-              </div>
-              
+              <input 
+                type="text" placeholder="🔍 Buscar por celular o ID..." value={searchTerm} 
+                onChange={e => setSearchTerm(e.target.value)} 
+                className="w-full px-6 py-3 rounded-2xl bg-gray-50 border-0 font-bold focus:ring-4 focus:ring-green-100 outline-none"
+              />
               <div className="flex flex-wrap gap-2">
                 {['Todos', 'Pendiente', 'Pendiente de Pago', 'Pagado - Por Entregar', 'Finalizado'].map(status => (
                   <button
-                    key={status}
-                    onClick={() => setStatusFilter(status)}
-                    className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${
-                      statusFilter === status 
-                      ? 'bg-gray-800 text-white shadow-md' 
-                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                    }`}
+                    key={status} onClick={() => setStatusFilter(status)}
+                    className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${statusFilter === status ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
                   >
                     {status}
                   </button>
@@ -107,25 +153,22 @@ export default function AdminOrders() {
               {filteredOrders.map((order) => (
                 <div 
                   key={order.id} 
-                  className={`rounded-[2.5rem] shadow-xl border-2 transition-all overflow-hidden flex flex-col ${
+                  className={`rounded-[2.5rem] shadow-xl border-2 transition-all flex flex-col overflow-hidden ${
                     order.estado === 'Pendiente' ? 'bg-orange-50 border-orange-200' : 
                     order.estado === 'Pendiente de Pago' ? 'bg-blue-50 border-blue-200' : 
-                    order.estado === 'Pagado - Por Entregar' ? 'bg-green-50 border-green-200' : 
-                    'bg-white border-gray-100 opacity-80'
+                    order.estado === 'Pagado - Por Entregar' ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100'
                   }`}
                 >
-                  {/* CABECERA CON SELECTOR DE ESTADO (SEGURIDAD) */}
                   <div className="p-5 border-b border-black/5">
                     <div className="flex justify-between items-center mb-3">
-                      <span className="text-[10px] font-black opacity-40 uppercase tracking-widest">Orden #{order.id}</span>
+                      <span className="text-[10px] font-black opacity-40 uppercase">Orden #{order.id}</span>
                       <select 
                         value={order.estado}
                         onChange={(e) => updateStatus(order.id, e.target.value)}
-                        className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-full border-0 shadow-sm cursor-pointer outline-none ${
+                        className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-full border-0 shadow-sm ${
                           order.estado === 'Pendiente' ? 'bg-orange-500 text-white' : 
                           order.estado === 'Pendiente de Pago' ? 'bg-blue-600 text-white' : 
-                          order.estado === 'Pagado - Por Entregar' ? 'bg-green-600 text-white' : 
-                          'bg-gray-400 text-white'
+                          order.estado === 'Pagado - Por Entregar' ? 'bg-green-600 text-white' : 'bg-gray-400 text-white'
                         }`}
                       >
                         <option value="Pendiente">Pendiente</option>
@@ -138,13 +181,12 @@ export default function AdminOrders() {
                     <p className="font-black text-gray-800 text-lg leading-none tracking-tighter">{order.telefono_cliente}</p>
                   </div>
 
-                  {/* AJUSTE DE GRAMAJE */}
-                  <div className="p-5 flex-1 space-y-2 max-h-56 overflow-y-auto custom-scrollbar">
+                  <div className="p-5 flex-1 space-y-2 max-h-56 overflow-y-auto">
                     {order.detalle_pedido?.map((item: any, idx: number) => (
                       <div key={idx} className="flex items-center gap-3 bg-white/50 backdrop-blur-sm p-3 rounded-2xl border border-black/5 shadow-sm">
-                        <span className="flex-1 text-[11px] font-black text-gray-700 leading-tight uppercase tracking-tighter">{item.nombre}</span>
+                        <span className="flex-1 text-[11px] font-black text-gray-700 uppercase tracking-tighter">{item.nombre}</span>
                         <div className="flex items-center gap-1 bg-white rounded-xl border-2 border-green-100 px-2 py-1">
-                           <input 
+                          <input 
                             type="number" step="0.001" value={item.quantity}
                             onChange={(e) => updateItemQuantity(order.id, idx, parseFloat(e.target.value))}
                             className="w-16 font-black text-xs text-green-700 text-center outline-none bg-transparent"
@@ -155,15 +197,15 @@ export default function AdminOrders() {
                     ))}
                   </div>
 
-                  {/* ACCIONES RÁPIDAS */}
                   <div className="p-5 bg-black/5 mt-auto">
                     <div className="flex justify-between items-end mb-4">
-                      <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total Real</p>
+                      <p className="text-[10px] font-black text-gray-500 uppercase">Total Real</p>
                       <p className="text-2xl font-black text-gray-900 tracking-tighter">{formatCurrency(order.total)}</p>
                     </div>
 
                     {order.estado === 'Pendiente' && (
-                      <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-lg active:scale-95 transition-all">🚀 Enviar Ticket</button>
+                      /* CORRECCIÓN AQUÍ: Ahora llama a sendDigitalTicket en lugar de solo updateStatus */
+                      <button onClick={() => sendDigitalTicket(order)} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-lg active:scale-95 transition-all">🚀 Enviar Ticket Digital</button>
                     )}
 
                     {order.estado === 'Pendiente de Pago' && (
