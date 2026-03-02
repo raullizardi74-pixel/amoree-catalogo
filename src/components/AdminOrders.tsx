@@ -42,9 +42,40 @@ export default function AdminOrders() {
   }, [orders]);
 
   const updateStatus = async (orderId: number, nextStatus: string) => {
-    const { error } = await supabase.from('pedidos').update({ estado: nextStatus }).eq('id', orderId);
-    if (!error) fetchOrders();
-  };
+  // 1. Buscamos el pedido actual en nuestro estado local para tener los pesos nuevos
+  const pedidoActual = orders.find(o => o.id === orderId);
+  
+  // 2. Si Hugo está confirmando pesos, preparamos el WhatsApp antes de actualizar
+  if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
+    const nombreCliente = pedidoActual.telefono_cliente.split(':')[1] || 'Cliente';
+    const numWhatsApp = pedidoActual.whatsapp_contacto || pedidoActual.telefono_cliente.split(':')[0];
+
+    const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
+      `Hola ${nombreCliente.trim()}, ya pesamos tus productos en tienda:%0A` +
+      `--------------------------%0A` +
+      pedidoActual.detalle_pedido.map((item: any) => 
+        `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
+      ).join('%0A') +
+      `%0A--------------------------%0A` +
+      `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A%0A` +
+      `Favor de confirmar para proceder con tu entrega. ¡Gracias! 🚀`;
+
+    // Abrimos WhatsApp en una pestaña nueva
+    window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
+  }
+
+  // 3. Actualizamos Supabase con el nuevo estado y el TOTAL REAL que Hugo ajustó
+  const { error } = await supabase
+    .from('pedidos')
+    .update({ 
+      estado: nextStatus,
+      total: pedidoActual?.total, // Guardamos el peso ajustado
+      detalle_pedido: pedidoActual?.detalle_pedido // Guardamos los detalles con pesos nuevos
+    })
+    .eq('id', orderId);
+
+  if (!error) fetchOrders();
+};
 
   const updateItemQuantity = (orderId: number, itemIdx: number, newQty: number) => {
     setOrders(prev => prev.map(order => {
