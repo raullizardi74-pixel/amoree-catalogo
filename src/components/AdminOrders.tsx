@@ -41,14 +41,25 @@ export default function AdminOrders() {
     return counts;
   }, [orders]);
 
-  const updateStatus = async (orderId: number, nextStatus: string) => {
-  // 1. Buscamos el pedido actual en nuestro estado local para tener los pesos nuevos
+ const updateStatus = async (orderId: number, nextStatus: string) => {
   const pedidoActual = orders.find(o => o.id === orderId);
   
-  // 2. Si Hugo está confirmando pesos, preparamos el WhatsApp antes de actualizar
   if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
     const nombreCliente = pedidoActual.telefono_cliente.split(':')[1] || 'Cliente';
     const numWhatsApp = pedidoActual.whatsapp_contacto || pedidoActual.telefono_cliente.split(':')[0];
+
+    // --- FORMATEADOR DE HORA ---
+    const formatHora = (hora: string) => {
+      if (!hora) return 'Lo antes posible';
+      const [h, m] = hora.split(':');
+      const horas = parseInt(h);
+      const ampm = horas >= 12 ? 'PM' : 'AM';
+      const h12 = horas % 12 || 12;
+      return `${h12}:${m} ${ampm}`;
+    };
+
+    // --- DATOS BANCARIOS (Ajusta con los reales de Hugo) ---
+    const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente.trim()}`;
 
     const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
       `Hola ${nombreCliente.trim()}, ya pesamos tus productos en tienda:%0A` +
@@ -57,26 +68,27 @@ export default function AdminOrders() {
         `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
       ).join('%0A') +
       `%0A--------------------------%0A` +
-      `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A%0A` +
-      `Favor de confirmar para proceder con tu entrega. ¡Gracias! 🚀`;
+      `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
+      `🚚 *HORARIO DE ENTREGA:* ${formatHora(pedidoActual.horario_entrega)}%0A` +
+      `--------------------------%0A` +
+      datosBancarios + `%0A%0A` +
+      `*Favor de enviar comprobante por este medio.* ¡Gracias! 🚀`;
 
-    // Abrimos WhatsApp en una pestaña nueva
     window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
   }
 
-  // 3. Actualizamos Supabase con el nuevo estado y el TOTAL REAL que Hugo ajustó
+  // Actualización en Supabase
   const { error } = await supabase
     .from('pedidos')
     .update({ 
       estado: nextStatus,
-      total: pedidoActual?.total, // Guardamos el peso ajustado
-      detalle_pedido: pedidoActual?.detalle_pedido // Guardamos los detalles con pesos nuevos
+      total: pedidoActual?.total,
+      detalle_pedido: pedidoActual?.detalle_pedido 
     })
     .eq('id', orderId);
 
   if (!error) fetchOrders();
 };
-
   const updateItemQuantity = (orderId: number, itemIdx: number, newQty: number) => {
     setOrders(prev => prev.map(order => {
       if (order.id === orderId) {
