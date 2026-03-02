@@ -19,11 +19,29 @@ export default function ClientsModule() {
     setLoading(false);
   };
 
-  const handleAddCliente = async () => {
-    const { error } = await supabase.from('clientes').insert([nuevoCliente]);
+ const handleRegistrarAbono = async () => {
+    const monto = parseFloat(montoAbono);
+    if (isNaN(monto) || !clienteSeleccionado) return;
+
+    const { error } = await supabase.rpc('registrar_abono', { 
+      client_id: clienteSeleccionado.id, 
+      monto: monto 
+    });
+
     if (!error) {
-      setShowAdd(false);
-      setNuevoCliente({ nombre: '', telefono: '', email: '' });
+      // REGISTRO DEL PEDIDO TIPO ABONO
+      await supabase.from('pedidos').insert([{
+        telefono_cliente: `ABONO: ${clienteSeleccionado.nombre}`,
+        total: monto,
+        estado: 'Pagado',
+        origen: 'Mostrador',
+        metodo_pago: 'Efectivo',
+        cliente_id: clienteSeleccionado.id,
+        detalle_pedido: [] // <--- CAMBIO VITAL: Evita que sea null
+      }]);
+
+      setShowAbono(false);
+      setMontoAbono('');
       fetchClientes();
     }
   };
