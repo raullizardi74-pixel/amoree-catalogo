@@ -31,180 +31,179 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  const itemFrequency = useMemo(() => {
-    const counts: Record<string, number> = {};
-    orders.forEach(order => {
-      (order.detalle_pedido || []).forEach((item: any) => {
-        counts[item.nombre] = (counts[item.nombre] || 0) + 1;
-      });
-    });
-    return counts;
-  }, [orders]);
+  const updateStatus = async (orderId: number, nextStatus: string) => {
+    const pedidoActual = orders.find(o => o.id === orderId);
+    
+    // Disparador de WhatsApp cuando se confirman pesos
+    if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
+      // Extracción de datos del string "Tel : Nombre : Hora"
+      const partes = pedidoActual.telefono_cliente.split(':');
+      const telefonoOriginal = partes[0]?.trim() || '';
+      const nombreCliente = partes[1]?.trim() || 'Cliente';
+      const horaSucia = partes[2]?.trim() || 'Lo antes posible';
 
- const updateStatus = async (orderId: number, nextStatus: string) => {
-  const pedidoActual = orders.find(o => o.id === orderId);
-  
-  if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
-    const nombreCliente = pedidoActual.telefono_cliente.split(':')[1] || 'Cliente';
-    const numWhatsApp = pedidoActual.whatsapp_contacto || pedidoActual.telefono_cliente.split(':')[0];
+      // Formateador de hora robusto (24h -> 12h AM/PM)
+      const formatHora = (hRaw: string) => {
+        if (!hRaw.includes(':')) return hRaw;
+        try {
+          const [h, m] = hRaw.split(':');
+          let horas = parseInt(h);
+          const ampm = horas >= 12 ? 'PM' : 'AM';
+          horas = horas % 12 || 12;
+          return `${horas}:${m.padStart(2, '0')} ${ampm}`;
+        } catch { return hRaw; }
+      };
 
-    // --- FORMATEADOR DE HORA ---
-    const formatHora = (hora: string) => {
-      if (!hora) return 'Lo antes posible';
-      const [h, m] = hora.split(':');
-      const horas = parseInt(h);
-      const ampm = horas >= 12 ? 'PM' : 'AM';
-      const h12 = horas % 12 || 12;
-      return `${h12}:${m} ${ampm}`;
-    };
+      const horaFinal = formatHora(horaSucia);
+      const numWhatsApp = pedidoActual.whatsapp_contacto || telefonoOriginal;
 
-    // --- DATOS BANCARIOS (Ajusta con los reales de Hugo) ---
-    const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente.trim()}`;
+      // Estructura de cobro profesional
+      const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente}`;
 
-    const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
-      `Hola ${nombreCliente.trim()}, ya pesamos tus productos en tienda:%0A` +
-      `--------------------------%0A` +
-      pedidoActual.detalle_pedido.map((item: any) => 
-        `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
-      ).join('%0A') +
-      `%0A--------------------------%0A` +
-      `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
-      `🚚 *HORARIO DE ENTREGA:* ${formatHora(pedidoActual.horario_entrega)}%0A` +
-      `--------------------------%0A` +
-      datosBancarios + `%0A%0A` +
-      `*Favor de enviar comprobante por este medio.* ¡Gracias! 🚀`;
+      const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
+        `Hola ${nombreCliente}, ya pesamos tus productos en tienda:%0A` +
+        `--------------------------%0A` +
+        pedidoActual.detalle_pedido.map((item: any) => 
+          `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
+        ).join('%0A') +
+        `%0A--------------------------%0A` +
+        `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
+        `🚚 *HORARIO DE ENTREGA:* ${horaFinal}%0A` +
+        `--------------------------%0A` +
+        datosBancarios + `%0A%0A` +
+        `*Favor de enviar comprobante por este medio.* ¡Gracias! 🚀`;
 
-    window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
-  }
+      window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
+    }
 
-  // Actualización en Supabase
-  const { error } = await supabase
-    .from('pedidos')
-    .update({ 
-      estado: nextStatus,
-      total: pedidoActual?.total,
-      detalle_pedido: pedidoActual?.detalle_pedido 
-    })
-    .eq('id', orderId);
+    // Actualización en Base de Datos con persistencia de pesos ajustados
+    const { error } = await supabase
+      .from('pedidos')
+      .update({ 
+        estado: nextStatus,
+        total: pedidoActual?.total,
+        detalle_pedido: pedidoActual?.detalle_pedido
+      })
+      .eq('id', orderId);
 
-  if (!error) fetchOrders();
-};
-  const updateItemQuantity = (orderId: number, itemIdx: number, newQty: number) => {
+    if (!error) fetchOrders();
+  };
+
+  const updateItemQuantity = (orderId: number, itemId: string, newQty: number) => {
     setOrders(prev => prev.map(order => {
       if (order.id === orderId) {
-        const newDetails = [...order.detalle_pedido];
-        newDetails[itemIdx] = { ...newDetails[itemIdx], quantity: newQty };
-        const newTotal = newDetails.reduce((sum, item) => sum + (item.precio_venta * item.quantity), 0);
+        const newDetails = order.detalle_pedido.map((item: any) => 
+          item.id === itemId ? { ...item, quantity: newQty } : item
+        );
+        const newTotal = newDetails.reduce((acc: number, item: any) => acc + (item.quantity * item.precio_venta), 0);
         return { ...order, detalle_pedido: newDetails, total: newTotal };
       }
       return order;
     }));
   };
 
-  const filteredOrders = orders.filter(o => {
-    const matchesSearch = o.telefono_cliente?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'Todos' || o.estado === statusFilter;
+  const filteredOrders = orders.filter(order => {
+    const matchesSearch = order.telefono_cliente.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'Todos' || order.estado === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  if (view === 'pos') return <POS onBack={() => { setView('orders'); fetchOrders(); }} />;
+  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8"><div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
   return (
-    <div className="p-4 md:p-8 bg-gray-100 min-h-screen pb-32">
-      <div className="max-w-6xl mx-auto">
-        
-        {/* NAVEGACIÓN */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
-          <h1 className="text-3xl font-black italic uppercase tracking-tighter">Amoree <span className="text-green-600">Admin</span></h1>
-          <div className="flex bg-white p-1.5 rounded-2xl shadow-md border border-gray-200">
-            <button onClick={() => setView('orders')} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase ${view === 'orders' ? 'bg-green-600 text-white shadow-lg' : 'text-gray-400'}`}>📦 Logística</button>
-            <button onClick={() => setView('stats')} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase ${view === 'stats' ? 'bg-green-600 text-white shadow-lg' : 'text-gray-400'}`}>📊 Negocio</button>
-            <button onClick={() => setView('clients')} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase ${view === 'clients' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400'}`}>👥 Clientes</button>
-          </div>
+    <div className="min-h-screen bg-[#F8F9FA] pb-32">
+      {/* HEADER DINÁMICO */}
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
+          <h1 className="text-xl font-black text-gray-900 tracking-tighter uppercase">Amoree <span className="text-green-600">OS</span></h1>
         </div>
+        <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
+          <button onClick={() => setView('orders')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'orders' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Pedidos</button>
+          <button onClick={() => setView('pos')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'pos' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>TPV</button>
+          <button onClick={() => setView('clients')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'clients' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Cartera</button>
+          <button onClick={() => setView('stats')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'stats' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Stats</button>
+        </div>
+      </div>
 
-        {view === 'orders' ? (
-          <>
-            <button onClick={() => setView('pos')} className="w-full bg-blue-600 text-white p-6 rounded-[2.5rem] shadow-xl shadow-blue-100 flex items-center justify-center gap-4 mb-10 active:scale-95 transition-all">
-              <span className="text-3xl">⚡</span>
-              <p className="text-xl font-black uppercase italic">Venta en Mostrador (TPV)</p>
-            </button>
+      {view === 'pos' ? <POS /> : view === 'orders' ? (
+        <>
+          {/* FILTROS DE BÚSQUEDA */}
+          <div className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-4">
+            <input type="text" placeholder="Buscar por cliente..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm focus:outline-none focus:ring-2 focus:ring-green-600/20 transition-all shadow-sm" />
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700 shadow-sm">
+              <option>Todos</option>
+              <option>Pendiente</option>
+              <option>Pendiente de Pago</option>
+              <option>Pagado - Por Entregar</option>
+              <option>Finalizado</option>
+              <option>Cancelado</option>
+            </select>
+          </div>
 
-            <div className="bg-white p-5 rounded-3xl shadow-sm mb-10 space-y-4">
-              <input type="text" placeholder="🔍 Buscar por nombre o celular..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full px-6 py-4 rounded-2xl bg-gray-50 border-0 font-bold outline-none" />
-              <div className="flex flex-wrap gap-2">
-                {['Todos', 'Pendiente', 'Pendiente de Pago', 'Pagado - Por Entregar', 'Finalizado'].map(status => (
-                  <button key={status} onClick={() => setStatusFilter(status)} className={`px-4 py-2 rounded-full text-[9px] font-black uppercase transition-all ${statusFilter === status ? 'bg-gray-800 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>{status}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {filteredOrders.map((order) => (
-                <div key={order.id} className={`rounded-[2.5rem] shadow-xl border-2 flex flex-col overflow-hidden transition-all ${order.estado === 'Pendiente' ? 'bg-orange-50 border-orange-200' : order.estado === 'Pendiente de Pago' ? 'bg-blue-50 border-blue-200' : order.estado === 'Pagado - Por Entregar' ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100'}`}>
-                  <div className="p-5 border-b border-black/5 flex justify-between items-center bg-white/40">
-                    <p className="font-black text-gray-800 text-sm">{order.telefono_cliente}</p>
-                    <span className={`text-[8px] font-black uppercase px-3 py-1.5 rounded-full ${order.estado === 'Finalizado' ? 'bg-gray-200 text-gray-400' : 'bg-white text-gray-900 shadow-sm'}`}>{order.estado}</span>
+          {/* GRID DE PEDIDOS */}
+          <div className="px-6 max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+            {filteredOrders.map((order) => (
+              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm hover:shadow-md transition-all">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">Cliente</p>
+                    <h3 className="text-lg font-black text-gray-900 leading-tight">{order.telefono_cliente.split(':')[1] || 'Sin Nombre'}</h3>
+                    <p className="text-xs font-bold text-gray-400 mt-1">{order.telefono_cliente.split(':')[0]}</p>
                   </div>
+                  <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
+                    order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' :
+                    order.estado === 'Pendiente de Pago' ? 'bg-blue-100 text-blue-600' :
+                    order.estado === 'Pagado - Por Entregar' ? 'bg-green-100 text-green-600' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{order.estado}</span>
+                </div>
 
-                  <div className="p-6 flex-1 space-y-2">
-                    {(order.detalle_pedido || []).length > 0 ? (
-                      [...order.detalle_pedido].sort((a,b) => (itemFrequency[b.nombre] || 0) - (itemFrequency[a.nombre] || 0)).map((item, idx) => {
-                        const originalIdx = order.detalle_pedido.findIndex((i: any) => i.nombre === item.nombre);
-                        return (
-                          <div key={idx} className="flex justify-between items-center text-[11px] font-bold bg-white/60 p-3 rounded-xl border border-black/5">
-                            <span className="uppercase tracking-tighter">{item.nombre}</span>
-                            <input type="number" step="0.001" value={item.quantity} onChange={e => updateItemQuantity(order.id, originalIdx, parseFloat(e.target.value))} className="w-16 font-black text-xs text-green-700 text-center bg-white border-2 border-green-100 rounded-lg py-1 outline-none" />
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="text-center py-4 uppercase text-[10px] font-black text-blue-600 tracking-widest">
-                         ✨ Movimiento de Saldo / Abono
+                <div className="space-y-4 mb-8">
+                  {order.detalle_pedido.map((item: any) => (
+                    <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-3xl border border-gray-100">
+                      <span className="text-sm font-bold text-gray-800">{item.nombre}</span>
+                      <div className="flex items-center gap-3">
+                        <input type="number" value={item.quantity} onChange={(e) => updateItemQuantity(order.id, item.id, parseFloat(e.target.value))} className="w-16 bg-white border border-gray-200 text-center rounded-xl py-1 text-sm font-black focus:outline-none focus:ring-2 focus:ring-green-600/20" step="0.05" />
+                        <span className="text-xs font-bold text-gray-400">kg</span>
                       </div>
-                    )}
-                  </div>
-
-                  <div className="p-6 bg-black/5 flex justify-between items-end">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] font-black opacity-30 uppercase">{order.metodo_pago || 'Efectivo'}</span>
-                      {order.metodo_pago === 'A Cuenta' && order.estado !== 'Finalizado' && (
-                        <div className="bg-red-600 text-white text-[8px] font-black px-2 py-1 rounded-lg uppercase animate-pulse">Deuda Activa</div>
-                      )}
                     </div>
-                    <p className="text-2xl font-black tracking-tighter">{formatCurrency(order.total)}</p>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between pt-6 border-t border-gray-100">
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Final</p>
+                    <p className="text-2xl font-black text-green-600">{formatCurrency(order.total)}</p>
                   </div>
-                  
-                  {/* BOTONES DE ACCIÓN RÁPIDA */}
-                  <div className="px-6 pb-6 bg-black/5">
-                    {order.estado === 'Pendiente' && <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">🚀 Confirmar Pesos</button>}
-                    {order.estado === 'Pendiente de Pago' && <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="w-full bg-green-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">💰 Recibir Pago</button>}
-                    {order.estado === 'Pagado - Por Entregar' && <button onClick={() => updateStatus(order.id, 'Finalizado')} className="w-full bg-gray-800 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">📦 Marcar Entregado</button>}
+                  <div className="flex gap-2">
+                    {order.estado === 'Pendiente' && <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-600/20 hover:scale-105 transition-all">⚖️ Confirmar Pesos</button>}
+                    {order.estado === 'Pendiente de Pago' && <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/20 hover:scale-105 transition-all">💰 Marcar Pagado</button>}
+                    {order.estado === 'Pagado - Por Entregar' && <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-gray-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 transition-all">📦 Entregado</button>}
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
+
+      {/* SELLO DE GARANTÍA AUTOMATIZA CON RAUL */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
+         <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
+            <div className="flex items-center gap-3">
+               <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🚀</div>
+               <div>
+                  <p className="text-[10px] font-black text-gray-900 uppercase tracking-tighter leading-none mb-1">Automatiza con Raul</p>
+                  <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Socio Tecnológico Amoree</p>
+               </div>
             </div>
-          </>
-        ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
-
-        {/* SELLO DE GARANTÍA */}
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
-           <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
-              <div className="flex items-center gap-3">
-                 <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🚀</div>
-                 <div>
-                    <p className="text-[10px] font-black text-gray-900 uppercase tracking-tighter leading-none mb-1">Automatiza con Raul</p>
-                    <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Socio Tecnológico Amoree</p>
-                 </div>
-              </div>
-              <div className="h-8 w-[1px] bg-gray-200 mx-2"></div>
-              <div className="text-right">
-                 <p className="text-[8px] font-black text-green-600 uppercase tracking-widest mb-1">Certificado</p>
-                 <p className="text-[10px] font-black text-gray-900">2026</p>
-              </div>
-           </div>
-        </div>
-
+            <div className="h-8 w-[1px] bg-gray-200 mx-2"></div>
+            <div className="text-right">
+               <p className="text-[8px] font-black text-green-600 uppercase tracking-widest mb-1">Swiss Made</p>
+               <p className="text-[10px] font-bold text-gray-900 leading-none">V2.0</p>
+            </div>
+         </div>
       </div>
     </div>
   );
