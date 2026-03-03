@@ -16,11 +16,18 @@ export default function AdminOrders() {
   const fetchOrders = async () => {
     try {
       setLoading(true);
+      setErrorMsg(null);
       const { data, error } = await supabase.from('pedidos').select('*');
+      
       if (error) throw error;
+
       if (data) {
         const statusWeight: Record<string, number> = {
-          'Pendiente': 1, 'Pendiente de Pago': 2, 'Pagado - Por Entregar': 3, 'Finalizado': 4, 'Cancelado': 5
+          'Pendiente': 1, 
+          'Pendiente de Pago': 2, 
+          'Pagado - Por Entregar': 3, 
+          'Finalizado': 4, 
+          'Cancelado': 5
         };
         const sorted = data.sort((a, b) => {
           const weightA = statusWeight[a.estado] || 6;
@@ -31,55 +38,67 @@ export default function AdminOrders() {
         setOrders(sorted);
       }
     } catch (err: any) {
+      console.error("Error:", err.message);
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchOrders(); }, []);
+  useEffect(() => {
+    fetchOrders();
+  }, []);
 
   const updateStatus = async (orderId: number, nextStatus: string) => {
     const pedidoActual = orders.find(o => o.id === orderId);
     
     if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
-      // --- LÓGICA DE EXTRACCIÓN LIMPIA ---
-      const partes = pedidoActual.telefono_cliente.split(':').map((p: string) => p.trim());
+      // --- EXTRACCIÓN QUIRÚRGICA ---
+      // Formato esperado: "Teléfono : Fecha : Hora"
+      const partes = (pedidoActual.telefono_cliente || "").split(':').map((p: string) => p.trim());
       const telefono = partes[0] || 'Sin Teléfono';
-      
-      // Si partes[2] existe y tiene formato de hora (..:..), la usamos.
-      let horaEntrega = "A convenir";
-      const posibleHora = partes.find((p: string) => p.includes(':') && p !== telefono);
-      if (posibleHora) {
-        const [h, m] = posibleHora.split(':');
-        const hh = parseInt(h);
-        const ampm = hh >= 12 ? 'PM' : 'AM';
-        const h12 = hh % 12 || 12;
-        horaEntrega = `${h12}:${m.substring(0,2)} ${ampm}`;
-      }
+      const horaSucia = partes[2] || 'A convenir';
 
+      // Formateador de hora (Evita el "00" o formatos raros)
+      const formatHora = (h: string) => {
+        if (!h.includes(':')) return "A convenir";
+        try {
+          const [horas, minutos] = h.split(':');
+          let hh = parseInt(horas);
+          const ampm = hh >= 12 ? 'PM' : 'AM';
+          hh = hh % 12 || 12;
+          return `${hh}:${minutos.substring(0,2)} ${ampm}`;
+        } catch { return "Lo antes posible"; }
+      };
+
+      const horaFinal = formatHora(horaSucia);
+      const numWhatsApp = pedidoActual.whatsapp_contacto || telefono;
+
+      // MENSAJE PROFESIONAL
       const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
         `Hola, *Cliente de Amoree*, ya pesamos tus productos en tienda:%0A` +
         `--------------------------%0A` +
         (pedidoActual.detalle_pedido?.map((item: any) => 
           `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
-        ).join('%0A') || 'Detalles en camino') +
+        ).join('%0A') || 'Detalles en proceso') +
         `%0A--------------------------%0A` +
         `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
-        `🚚 *HORARIO DE ENTREGA:* ${horaEntrega}%0A` +
+        `🚚 *HORARIO DE ENTREGA:* ${horaFinal}%0A` +
         `--------------------------%0A%0A` +
         `🏦 *DATOS DE PAGO:*%0A` +
         `*Banco:* BBVA%0A` +
         `*Titular:* Hugo Macario López%0A` +
         `*CLABE:* 012 650 0152436789 0%0A` +
-        `*Concepto:* ${telefono}%0A%0A` + // Usamos el teléfono como concepto
+        `*Concepto:* ${telefono.slice(-10)}%0A%0A` + 
         `Favor de enviar comprobante por este medio. ¡Gracias! 🚀`;
 
-      window.open(`https://wa.me/${telefono.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
+      window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
     }
 
     const { error } = await supabase.from('pedidos').update({ 
-      estado: nextStatus, total: pedidoActual?.total, detalle_pedido: pedidoActual?.detalle_pedido 
+      estado: nextStatus,
+      total: pedidoActual?.total,
+      detalle_pedido: pedidoActual?.detalle_pedido
     }).eq('id', orderId);
 
     if (!error) fetchOrders();
@@ -99,23 +118,33 @@ export default function AdminOrders() {
   };
 
   const filteredOrders = orders.filter(order => {
-    return (order.telefono_cliente || '').toLowerCase().includes(searchTerm.toLowerCase()) &&
+    const searchStr = (order.telefono_cliente || '').toLowerCase();
+    return searchStr.includes(searchTerm.toLowerCase()) &&
            (statusFilter === 'Todos' || order.estado === statusFilter);
   });
 
-  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="w-10 h-10 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div></div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
+        <div className="w-10 h-10 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+        <p className="mt-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Sincronizando...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-32">
+      {/* HEADER */}
       <div className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
         <div className="flex items-center gap-4">
           <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
           <h1 className="text-xl font-black text-gray-900 uppercase">Amoree <span className="text-green-600">OS</span></h1>
         </div>
         <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
-          {['orders', 'pos', 'clients', 'stats'].map((v) => (
-            <button key={v} onClick={() => setView(v as any)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === v ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>{v === 'orders' ? 'Pedidos' : v.toUpperCase()}</button>
-          ))}
+          <button onClick={() => setView('orders')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${view === 'orders' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Pedidos</button>
+          <button onClick={() => setView('pos')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${view === 'pos' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>TPV</button>
+          <button onClick={() => setView('clients')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${view === 'clients' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Cartera</button>
+          <button onClick={() => setView('stats')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${view === 'stats' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Stats</button>
         </div>
       </div>
 
@@ -124,20 +153,28 @@ export default function AdminOrders() {
           <div className="flex flex-col md:flex-row gap-4 mb-8">
             <input type="text" placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm focus:outline-none focus:ring-2 focus:ring-green-600/20 shadow-sm" />
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700">
-              {['Todos', 'Pendiente', 'Pendiente de Pago', 'Pagado - Por Entregar', 'Finalizado', 'Cancelado'].map(s => <option key={s}>{s}</option>)}
+              <option>Todos</option>
+              <option>Pendiente</option>
+              <option>Pendiente de Pago</option>
+              <option>Pagado - Por Entregar</option>
+              <option>Finalizado</option>
             </select>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {filteredOrders.map((order) => (
-              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm hover:shadow-md transition-all">
+              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm">
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
                     <h3 className="text-lg font-black text-gray-900 leading-tight">Cliente de Amoree</h3>
                     <p className="text-xs font-bold text-gray-400 mt-1">{order.telefono_cliente.split(':')[0]}</p>
                   </div>
-                  <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' : order.estado === 'Pendiente de Pago' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>{order.estado}</span>
+                  <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
+                    order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' :
+                    order.estado === 'Pendiente de Pago' ? 'bg-blue-100 text-blue-600' :
+                    'bg-green-100 text-green-600'
+                  }`}>{order.estado}</span>
                 </div>
 
                 <div className="space-y-4 mb-8">
@@ -169,6 +206,7 @@ export default function AdminOrders() {
         </div>
       ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
 
+      {/* SELLO DE GARANTÍA */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
          <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
             <div className="flex items-center gap-3">
