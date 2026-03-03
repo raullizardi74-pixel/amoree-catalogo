@@ -16,95 +16,71 @@ export default function AdminOrders() {
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      setErrorMsg(null);
-      
-      const { data, error } = await supabase
-        .from('pedidos')
-        .select('*');
-      
+      const { data, error } = await supabase.from('pedidos').select('*');
       if (error) throw error;
-
       if (data) {
         const statusWeight: Record<string, number> = {
-          'Pendiente': 1, 
-          'Pendiente de Pago': 2, 
-          'Pagado - Por Entregar': 3, 
-          'Finalizado': 4, 
-          'Cancelado': 5
+          'Pendiente': 1, 'Pendiente de Pago': 2, 'Pagado - Por Entregar': 3, 'Finalizado': 4, 'Cancelado': 5
         };
-        
         const sorted = data.sort((a, b) => {
           const weightA = statusWeight[a.estado] || 6;
           const weightB = statusWeight[b.estado] || 6;
           if (weightA !== weightB) return weightA - weightB;
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         });
-        
         setOrders(sorted);
       }
     } catch (err: any) {
-      console.error("Error en fetchOrders:", err.message);
       setErrorMsg(err.message);
     } finally {
-      // ESTO ES EL MATAFANTASMAS: El spinner se quita siempre
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchOrders();
-  }, []);
+  useEffect(() => { fetchOrders(); }, []);
 
   const updateStatus = async (orderId: number, nextStatus: string) => {
     const pedidoActual = orders.find(o => o.id === orderId);
     
     if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
-      const partes = pedidoActual.telefono_cliente ? pedidoActual.telefono_cliente.split(':') : [];
-      const telefonoOriginal = partes[0]?.trim() || '';
-      const nombreCliente = partes[1]?.trim() || 'Cliente';
-      const horaSucia = partes[2]?.trim() || 'Lo antes posible';
-
-      const formatHora = (hRaw: string) => {
-        if (!hRaw || !hRaw.includes(':')) return hRaw || 'Lo antes posible';
-        try {
-          const [h, m] = hRaw.split(':');
-          let horas = parseInt(h);
-          const ampm = horas >= 12 ? 'PM' : 'AM';
-          horas = horas % 12 || 12;
-          return `${horas}:${m.slice(0, 2).padStart(2, '0')} ${ampm}`;
-        } catch { return hRaw; }
-      };
-
-      const horaFinal = formatHora(horaSucia);
-      const numWhatsApp = pedidoActual.whatsapp_contacto || telefonoOriginal;
-      const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente}`;
-
-      const detallesTexto = pedidoActual.detalle_pedido?.map((item: any) => 
-        `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
-      ).join('%0A') || 'Sin detalles de productos';
+      // --- LÓGICA DE EXTRACCIÓN LIMPIA ---
+      const partes = pedidoActual.telefono_cliente.split(':').map((p: string) => p.trim());
+      const telefono = partes[0] || 'Sin Teléfono';
+      
+      // Si partes[2] existe y tiene formato de hora (..:..), la usamos.
+      let horaEntrega = "A convenir";
+      const posibleHora = partes.find((p: string) => p.includes(':') && p !== telefono);
+      if (posibleHora) {
+        const [h, m] = posibleHora.split(':');
+        const hh = parseInt(h);
+        const ampm = hh >= 12 ? 'PM' : 'AM';
+        const h12 = hh % 12 || 12;
+        horaEntrega = `${h12}:${m.substring(0,2)} ${ampm}`;
+      }
 
       const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
-        `Hola ${nombreCliente}, ya pesamos tus productos en tienda:%0A` +
+        `Hola, *Cliente de Amoree*, ya pesamos tus productos en tienda:%0A` +
         `--------------------------%0A` +
-        detallesTexto +
+        (pedidoActual.detalle_pedido?.map((item: any) => 
+          `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
+        ).join('%0A') || 'Detalles en camino') +
         `%0A--------------------------%0A` +
-        `*TOTAL FINAL: ${formatCurrency(pedidoActual.total || 0)}*%0A` +
-        `🚚 *HORARIO DE ENTREGA:* ${horaFinal}%0A` +
-        `--------------------------%0A` +
-        datosBancarios + `%0A%0A` +
-        `*Favor de enviar comprobante por este medio.* ¡Gracias! 🚀`;
+        `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
+        `🚚 *HORARIO DE ENTREGA:* ${horaEntrega}%0A` +
+        `--------------------------%0A%0A` +
+        `🏦 *DATOS DE PAGO:*%0A` +
+        `*Banco:* BBVA%0A` +
+        `*Titular:* Hugo Macario López%0A` +
+        `*CLABE:* 012 650 0152436789 0%0A` +
+        `*Concepto:* ${telefono}%0A%0A` + // Usamos el teléfono como concepto
+        `Favor de enviar comprobante por este medio. ¡Gracias! 🚀`;
 
-      window.open(`https://wa.me/${numWhatsApp.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
+      window.open(`https://wa.me/${telefono.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
     }
 
-    const { error } = await supabase
-      .from('pedidos')
-      .update({ 
-        estado: nextStatus,
-        total: pedidoActual?.total,
-        detalle_pedido: pedidoActual?.detalle_pedido
-      })
-      .eq('id', orderId);
+    const { error } = await supabase.from('pedidos').update({ 
+      estado: nextStatus, total: pedidoActual?.total, detalle_pedido: pedidoActual?.detalle_pedido 
+    }).eq('id', orderId);
 
     if (!error) fetchOrders();
   };
@@ -123,96 +99,45 @@ export default function AdminOrders() {
   };
 
   const filteredOrders = orders.filter(order => {
-    const searchStr = order.telefono_cliente || '';
-    const matchesSearch = searchStr.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'Todos' || order.estado === statusFilter;
-    return matchesSearch && matchesStatus;
+    return (order.telefono_cliente || '').toLowerCase().includes(searchTerm.toLowerCase()) &&
+           (statusFilter === 'Todos' || order.estado === statusFilter);
   });
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center p-8">
-        <div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="mt-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Sincronizando con Amoree Cloud...</p>
-      </div>
-    );
-  }
-
-  if (errorMsg) {
-    return (
-      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center p-8">
-        <div className="bg-white border border-red-100 p-8 rounded-[40px] text-center shadow-xl max-w-sm">
-          <p className="text-red-600 font-black uppercase text-[10px] tracking-widest mb-4">Error Crítico</p>
-          <p className="text-gray-600 text-sm mb-6">{errorMsg}</p>
-          <button onClick={fetchOrders} className="bg-red-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest">Reintentar</button>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="w-10 h-10 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-32">
-      {/* HEADER DINÁMICO */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
+      <div className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
         <div className="flex items-center gap-4">
           <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
-          <h1 className="text-xl font-black text-gray-900 tracking-tighter uppercase">Amoree <span className="text-green-600">OS</span></h1>
+          <h1 className="text-xl font-black text-gray-900 uppercase">Amoree <span className="text-green-600">OS</span></h1>
         </div>
         <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
-          <button onClick={() => setView('orders')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'orders' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Pedidos</button>
-          <button onClick={() => setView('pos')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'pos' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>TPV</button>
-          <button onClick={() => setView('clients')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'clients' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Cartera</button>
-          <button onClick={() => setView('stats')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'stats' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Stats</button>
+          {['orders', 'pos', 'clients', 'stats'].map((v) => (
+            <button key={v} onClick={() => setView(v as any)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === v ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>{v === 'orders' ? 'Pedidos' : v.toUpperCase()}</button>
+          ))}
         </div>
       </div>
 
       {view === 'pos' ? <POS /> : view === 'orders' ? (
-        <>
-          <div className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-4">
-            <input 
-              type="text" 
-              placeholder="Buscar cliente..." 
-              value={searchTerm} 
-              onChange={(e) => setSearchTerm(e.target.value)} 
-              className="flex-1 bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm focus:outline-none focus:ring-2 focus:ring-green-600/20 shadow-sm"
-            />
-            <select 
-              value={statusFilter} 
-              onChange={(e) => setStatusFilter(e.target.value)} 
-              className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700"
-            >
-              <option>Todos</option>
-              <option>Pendiente</option>
-              <option>Pendiente de Pago</option>
-              <option>Pagado - Por Entregar</option>
-              <option>Finalizado</option>
-              <option>Cancelado</option>
+        <div className="max-w-5xl mx-auto p-6">
+          <div className="flex flex-col md:flex-row gap-4 mb-8">
+            <input type="text" placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm focus:outline-none focus:ring-2 focus:ring-green-600/20 shadow-sm" />
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700">
+              {['Todos', 'Pendiente', 'Pendiente de Pago', 'Pagado - Por Entregar', 'Finalizado', 'Cancelado'].map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
 
-          <div className="px-6 max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-            {filteredOrders.length === 0 ? (
-              <div className="col-span-full py-20 text-center">
-                <p className="text-gray-400 font-black uppercase text-[10px] tracking-widest">No hay pedidos disponibles</p>
-              </div>
-            ) : filteredOrders.map((order) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {filteredOrders.map((order) => (
               <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm hover:shadow-md transition-all">
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
-                    <h3 className="text-lg font-black text-gray-900 leading-tight">
-                      {(order.telefono_cliente || '').split(':')[1]?.trim() || 'Sin Nombre'}
-                    </h3>
-                    <p className="text-xs font-bold text-gray-400 mt-1">
-                      {(order.telefono_cliente || '').split(':')[0]?.trim()}
-                    </p>
+                    <h3 className="text-lg font-black text-gray-900 leading-tight">Cliente de Amoree</h3>
+                    <p className="text-xs font-bold text-gray-400 mt-1">{order.telefono_cliente.split(':')[0]}</p>
                   </div>
-                  <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
-                    order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' :
-                    order.estado === 'Pendiente de Pago' ? 'bg-blue-100 text-blue-600' :
-                    order.estado === 'Pagado - Por Entregar' ? 'bg-green-100 text-green-600' :
-                    'bg-gray-100 text-gray-600'
-                  }`}>{order.estado}</span>
+                  <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' : order.estado === 'Pendiente de Pago' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>{order.estado}</span>
                 </div>
 
                 <div className="space-y-4 mb-8">
@@ -220,13 +145,7 @@ export default function AdminOrders() {
                     <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-3xl border border-gray-100">
                       <span className="text-sm font-bold text-gray-800">{item.nombre}</span>
                       <div className="flex items-center gap-3">
-                        <input 
-                          type="number" 
-                          value={item.quantity} 
-                          onChange={(e) => updateItemQuantity(order.id, item.id, parseFloat(e.target.value))} 
-                          className="w-16 bg-white border border-gray-200 text-center rounded-xl py-1 text-sm font-black" 
-                          step="0.05" 
-                        />
+                        <input type="number" value={item.quantity} onChange={(e) => updateItemQuantity(order.id, item.id, parseFloat(e.target.value))} className="w-16 bg-white border border-gray-200 text-center rounded-xl py-1 text-sm font-black" step="0.05" />
                         <span className="text-xs font-bold text-gray-400">kg</span>
                       </div>
                     </div>
@@ -236,27 +155,20 @@ export default function AdminOrders() {
                 <div className="flex items-center justify-between pt-6 border-t border-gray-100">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Final</p>
-                    <p className="text-2xl font-black text-green-600">{formatCurrency(order.total || 0)}</p>
+                    <p className="text-2xl font-black text-green-600">{formatCurrency(order.total)}</p>
                   </div>
                   <div className="flex gap-2">
-                    {order.estado === 'Pendiente' && (
-                      <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">⚖️ Confirmar Pesos</button>
-                    )}
-                    {order.estado === 'Pendiente de Pago' && (
-                      <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">💰 Marcar Pagado</button>
-                    )}
-                    {order.estado === 'Pagado - Por Entregar' && (
-                      <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-gray-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">📦 Entregado</button>
-                    )}
+                    {order.estado === 'Pendiente' && <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">⚖️ Confirmar Pesos</button>}
+                    {order.estado === 'Pendiente de Pago' && <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">💰 Marcar Pagado</button>}
+                    {order.estado === 'Pagado - Por Entregar' && <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-gray-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">📦 Entregado</button>}
                   </div>
                 </div>
               </div>
             ))}
           </div>
-        </>
+        </div>
       ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
 
-      {/* SELLO DE GARANTÍA AUTOMATIZA CON RAUL */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
          <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
             <div className="flex items-center gap-3">
