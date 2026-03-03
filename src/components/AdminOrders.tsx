@@ -17,7 +17,10 @@ export default function AdminOrders() {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const { data, error } = await supabase.from('pedidos').select('*');
+      
+      const { data, error } = await supabase
+        .from('pedidos')
+        .select('*');
       
       if (error) throw error;
 
@@ -29,18 +32,21 @@ export default function AdminOrders() {
           'Finalizado': 4, 
           'Cancelado': 5
         };
+        
         const sorted = data.sort((a, b) => {
           const weightA = statusWeight[a.estado] || 6;
           const weightB = statusWeight[b.estado] || 6;
           if (weightA !== weightB) return weightA - weightB;
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         });
+        
         setOrders(sorted);
       }
     } catch (err: any) {
-      console.error("Error:", err.message);
+      console.error("Error en fetchOrders:", err.message);
       setErrorMsg(err.message);
     } finally {
+      // ESTO ES EL MATAFANTASMAS: El spinner se quita siempre
       setLoading(false);
     }
   };
@@ -53,19 +59,19 @@ export default function AdminOrders() {
     const pedidoActual = orders.find(o => o.id === orderId);
     
     if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
-      const partes = pedidoActual.telefono_cliente.split(':');
+      const partes = pedidoActual.telefono_cliente ? pedidoActual.telefono_cliente.split(':') : [];
       const telefonoOriginal = partes[0]?.trim() || '';
       const nombreCliente = partes[1]?.trim() || 'Cliente';
       const horaSucia = partes[2]?.trim() || 'Lo antes posible';
 
       const formatHora = (hRaw: string) => {
-        if (!hRaw.includes(':')) return hRaw;
+        if (!hRaw || !hRaw.includes(':')) return hRaw || 'Lo antes posible';
         try {
           const [h, m] = hRaw.split(':');
           let horas = parseInt(h);
           const ampm = horas >= 12 ? 'PM' : 'AM';
           horas = horas % 12 || 12;
-          return `${horas}:${m.padStart(2, '0')} ${ampm}`;
+          return `${horas}:${m.slice(0, 2).padStart(2, '0')} ${ampm}`;
         } catch { return hRaw; }
       };
 
@@ -73,14 +79,16 @@ export default function AdminOrders() {
       const numWhatsApp = pedidoActual.whatsapp_contacto || telefonoOriginal;
       const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente}`;
 
+      const detallesTexto = pedidoActual.detalle_pedido?.map((item: any) => 
+        `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
+      ).join('%0A') || 'Sin detalles de productos';
+
       const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
         `Hola ${nombreCliente}, ya pesamos tus productos en tienda:%0A` +
         `--------------------------%0A` +
-        pedidoActual.detalle_pedido.map((item: any) => 
-          `- ${item.nombre}: ${item.quantity}kg x $${item.precio_venta} = *${formatCurrency(item.quantity * item.precio_venta)}*`
-        ).join('%0A') +
+        detallesTexto +
         `%0A--------------------------%0A` +
-        `*TOTAL FINAL: ${formatCurrency(pedidoActual.total)}*%0A` +
+        `*TOTAL FINAL: ${formatCurrency(pedidoActual.total || 0)}*%0A` +
         `🚚 *HORARIO DE ENTREGA:* ${horaFinal}%0A` +
         `--------------------------%0A` +
         datosBancarios + `%0A%0A` +
@@ -104,7 +112,7 @@ export default function AdminOrders() {
   const updateItemQuantity = (orderId: number, itemId: string, newQty: number) => {
     setOrders(prev => prev.map(order => {
       if (order.id === orderId) {
-        const newDetails = order.detalle_pedido.map((item: any) => 
+        const newDetails = (order.detalle_pedido || []).map((item: any) => 
           item.id === itemId ? { ...item, quantity: newQty } : item
         );
         const newTotal = newDetails.reduce((acc: number, item: any) => acc + (item.quantity * item.precio_venta), 0);
@@ -115,22 +123,36 @@ export default function AdminOrders() {
   };
 
   const filteredOrders = orders.filter(order => {
-    const matchesSearch = order.telefono_cliente.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchStr = order.telefono_cliente || '';
+    const matchesSearch = searchStr.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'Todos' || order.estado === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
+      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center p-8">
         <div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>
         <p className="mt-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Sincronizando con Amoree Cloud...</p>
       </div>
     );
   }
 
+  if (errorMsg) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center p-8">
+        <div className="bg-white border border-red-100 p-8 rounded-[40px] text-center shadow-xl max-w-sm">
+          <p className="text-red-600 font-black uppercase text-[10px] tracking-widest mb-4">Error Crítico</p>
+          <p className="text-gray-600 text-sm mb-6">{errorMsg}</p>
+          <button onClick={fetchOrders} className="bg-red-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest">Reintentar</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-32">
+      {/* HEADER DINÁMICO */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-4">
           <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
@@ -143,14 +165,6 @@ export default function AdminOrders() {
           <button onClick={() => setView('stats')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'stats' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Stats</button>
         </div>
       </div>
-
-      {errorMsg && (
-        <div className="max-w-5xl mx-auto mt-4 px-6">
-          <div className="bg-red-50 border border-red-200 p-4 rounded-2xl text-red-600 text-xs font-bold text-center">
-            ⚠️ Error de Supabase: {errorMsg}
-          </div>
-        </div>
-      )}
 
       {view === 'pos' ? <POS /> : view === 'orders' ? (
         <>
@@ -177,13 +191,21 @@ export default function AdminOrders() {
           </div>
 
           <div className="px-6 max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-            {filteredOrders.map((order) => (
-              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm">
+            {filteredOrders.length === 0 ? (
+              <div className="col-span-full py-20 text-center">
+                <p className="text-gray-400 font-black uppercase text-[10px] tracking-widest">No hay pedidos disponibles</p>
+              </div>
+            ) : filteredOrders.map((order) => (
+              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm hover:shadow-md transition-all">
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
-                    <h3 className="text-lg font-black text-gray-900 leading-tight">{order.telefono_cliente.split(':')[1] || 'Sin Nombre'}</h3>
-                    <p className="text-xs font-bold text-gray-400 mt-1">{order.telefono_cliente.split(':')[0]}</p>
+                    <h3 className="text-lg font-black text-gray-900 leading-tight">
+                      {(order.telefono_cliente || '').split(':')[1]?.trim() || 'Sin Nombre'}
+                    </h3>
+                    <p className="text-xs font-bold text-gray-400 mt-1">
+                      {(order.telefono_cliente || '').split(':')[0]?.trim()}
+                    </p>
                   </div>
                   <span className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
                     order.estado === 'Pendiente' ? 'bg-amber-100 text-amber-600' :
@@ -214,7 +236,7 @@ export default function AdminOrders() {
                 <div className="flex items-center justify-between pt-6 border-t border-gray-100">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Final</p>
-                    <p className="text-2xl font-black text-green-600">{formatCurrency(order.total)}</p>
+                    <p className="text-2xl font-black text-green-600">{formatCurrency(order.total || 0)}</p>
                   </div>
                   <div className="flex gap-2">
                     {order.estado === 'Pendiente' && (
@@ -234,7 +256,7 @@ export default function AdminOrders() {
         </>
       ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
 
-      {/* SELLO DE GARANTÍA */}
+      {/* SELLO DE GARANTÍA AUTOMATIZA CON RAUL */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
          <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
             <div className="flex items-center gap-3">
