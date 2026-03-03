@@ -8,25 +8,42 @@ import ClientsModule from './ClientsModule';
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null); // Nuevo estado para cazar errores
   const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients'>('orders');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
 
   const fetchOrders = async () => {
-    const { data } = await supabase.from('pedidos').select('*');
-    if (data) {
-      const statusWeight: Record<string, number> = {
-        'Pendiente': 1, 'Pendiente de Pago': 2, 'Pagado - Por Entregar': 3, 'Finalizado': 4, 'Cancelado': 5
-      };
-      const sorted = data.sort((a, b) => {
-        const weightA = statusWeight[a.estado] || 6;
-        const weightB = statusWeight[b.estado] || 6;
-        if (weightA !== weightB) return weightA - weightB;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      });
-      setOrders(sorted);
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+      
+      const { data, error } = await supabase.from('pedidos').select('*');
+      
+      if (error) throw error; // Si hay error, saltamos al catch
+
+      if (data) {
+        const statusWeight: Record<string, number> = {
+          'Pendiente': 1, 
+          'Pendiente de Pago': 2, 
+          'Pagado - Por Entregar': 3, 
+          'Finalizado': 4, 
+          'Cancelado': 5
+        };
+        const sorted = data.sort((a, b) => {
+          const weightA = statusWeight[a.estado] || 6;
+          const weightB = statusWeight[b.estado] || 6;
+          if (weightA !== weightB) return weightA - weightB;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+        setOrders(sorted);
+      }
+    } catch (err: any) {
+      console.error("❌ Error detectado:", err.message);
+      setErrorMsg(err.message); // Guardamos el error para mostrarlo
+    } finally {
+      setLoading(false); // ESTO MATA EL SPINNER PASE LO QUE PASE
     }
-    setLoading(false);
   };
 
   useEffect(() => { fetchOrders(); }, []);
@@ -108,16 +125,23 @@ export default function AdminOrders() {
     return matchesSearch && matchesStatus;
   });
 
-  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8"><div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div></div>;
+if (loading) return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
+      <div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+      <p className="mt-4 text-xs font-black text-gray-400 uppercase tracking-widest">Sincronizando con Amoree Cloud...</p>
+    </div>
+  );
 
-  return (
-    <div className="min-h-screen bg-[#F8F9FA] pb-32">
-      {/* HEADER DINÁMICO */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
-          <h1 className="text-xl font-black text-gray-900 tracking-tighter uppercase">Amoree <span className="text-green-600">OS</span></h1>
-        </div>
+  if (errorMsg) return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
+      <div className="bg-red-50 border border-red-200 p-8 rounded-[40px] text-center max-w-md">
+        <span className="text-4xl mb-4 block">⚠️</span>
+        <h2 className="text-lg font-black text-red-600 uppercase mb-2">Error de Conexión</h2>
+        <p className="text-sm text-red-500 font-bold mb-6">{errorMsg}</p>
+        <button onClick={fetchOrders} className="bg-red-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest">Reintentar Conexión</button>
+      </div>
+    </div>
+  );
         <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
           <button onClick={() => setView('orders')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'orders' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Pedidos</button>
           <button onClick={() => setView('pos')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'pos' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>TPV</button>
