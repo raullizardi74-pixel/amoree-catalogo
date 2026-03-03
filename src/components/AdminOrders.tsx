@@ -38,7 +38,7 @@ export default function AdminOrders() {
         setOrders(sorted);
       }
     } catch (err: any) {
-      console.error("Error en fetchOrders:", err.message);
+      console.error("Error:", err.message);
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
@@ -53,13 +53,11 @@ export default function AdminOrders() {
     const pedidoActual = orders.find(o => o.id === orderId);
     
     if (nextStatus === 'Pendiente de Pago' && pedidoActual) {
-      // Extracción de datos del string "Tel : Nombre : Hora"
       const partes = pedidoActual.telefono_cliente.split(':');
       const telefonoOriginal = partes[0]?.trim() || '';
       const nombreCliente = partes[1]?.trim() || 'Cliente';
       const horaSucia = partes[2]?.trim() || 'Lo antes posible';
 
-      // Formateador de hora (24h -> 12h AM/PM)
       const formatHora = (hRaw: string) => {
         if (!hRaw.includes(':')) return hRaw;
         try {
@@ -73,7 +71,6 @@ export default function AdminOrders() {
 
       const horaFinal = formatHora(horaSucia);
       const numWhatsApp = pedidoActual.whatsapp_contacto || telefonoOriginal;
-
       const datosBancarios = `%0A🏦 *DATOS DE PAGO:*%0A*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* ${nombreCliente}`;
 
       const mensaje = `*AMOREE - Confirmación de Pedido* 🥑%0A%0A` +
@@ -132,21 +129,8 @@ export default function AdminOrders() {
     );
   }
 
-  if (errorMsg) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8">
-        <div className="bg-white border border-red-200 p-8 rounded-[40px] text-center shadow-xl max-w-sm">
-          <p className="text-red-600 font-black uppercase text-[10px] tracking-widest mb-4">Error de Conexión</p>
-          <p className="text-gray-600 text-sm mb-6">{errorMsg}</p>
-          <button onClick={fetchOrders} className="bg-red-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest">Reintentar</button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-[#F8F9FA] pb-32 font-sans">
-      {/* HEADER */}
+    <div className="min-h-screen bg-[#F8F9FA] pb-32">
       <div className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-4">
           <div className="bg-green-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center text-xl shadow-lg">🥑</div>
@@ -159,6 +143,14 @@ export default function AdminOrders() {
           <button onClick={() => setView('stats')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'stats' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-400'}`}>Stats</button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="max-w-5xl mx-auto mt-4 px-6">
+          <div className="bg-red-50 border border-red-200 p-4 rounded-2xl text-red-600 text-xs font-bold text-center">
+            ⚠️ Error de Supabase: {errorMsg}
+          </div>
+        </div>
+      )}
 
       {view === 'pos' ? <POS /> : view === 'orders' ? (
         <>
@@ -173,7 +165,7 @@ export default function AdminOrders() {
             <select 
               value={statusFilter} 
               onChange={(e) => setStatusFilter(e.target.value)} 
-              className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700 shadow-sm"
+              className="bg-white border border-gray-200 px-6 py-4 rounded-3xl text-sm font-bold text-gray-700"
             >
               <option>Todos</option>
               <option>Pendiente</option>
@@ -186,7 +178,7 @@ export default function AdminOrders() {
 
           <div className="px-6 max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
             {filteredOrders.map((order) => (
-              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm hover:shadow-md transition-all">
+              <div key={order.id} className="bg-white border border-gray-200 rounded-[40px] p-8 shadow-sm">
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
@@ -226,13 +218,13 @@ export default function AdminOrders() {
                   </div>
                   <div className="flex gap-2">
                     {order.estado === 'Pendiente' && (
-                      <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 transition-all">⚖️ Confirmar Pesos</button>
+                      <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">⚖️ Confirmar Pesos</button>
                     )}
                     {order.estado === 'Pendiente de Pago' && (
-                      <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 transition-all">💰 Marcar Pagado</button>
+                      <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">💰 Marcar Pagado</button>
                     )}
                     {order.estado === 'Pagado - Por Entregar' && (
-                      <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-gray-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:scale-105 transition-all">📦 Entregado</button>
+                      <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-gray-800 text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg">📦 Entregado</button>
                     )}
                   </div>
                 </div>
@@ -242,7 +234,7 @@ export default function AdminOrders() {
         </>
       ) : view === 'stats' ? <Dashboard /> : <ClientsModule />}
 
-      {/* FOOTER - SELLO DE GARANTÍA */}
+      {/* SELLO DE GARANTÍA */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm px-4">
          <div className="bg-white/90 backdrop-blur-xl border border-gray-200 p-4 rounded-3xl flex items-center justify-between shadow-2xl">
             <div className="flex items-center gap-3">
