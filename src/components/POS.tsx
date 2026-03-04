@@ -19,7 +19,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
   }, []);
 
   const fetchProducts = async () => {
-    const { data } = await supabase.from('productos').select('*');
+    const { data } = await supabase.from('productos').select('*').order('nombre');
     if (data) setProducts(data);
   };
 
@@ -30,7 +30,9 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
   const addToCart = (product: any) => {
     const exists = cart.find(item => item.sku === product.sku);
-    if (!exists) setCart([...cart, { ...product, quantity: 1 }]);
+    if (!exists) {
+      setCart([...cart, { ...product, quantity: 1 }]);
+    }
   };
 
   const updateWeight = (sku: string, weight: number) => {
@@ -39,133 +41,157 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
   const totalVenta = cart.reduce((sum, item) => sum + (item.precio_venta * item.quantity), 0);
 
+  // --- FUNCIÓN DE CIERRE DE VENTA BLINDADA ---
   const handleFinalize = async () => {
     if (cart.length === 0) return;
-    setLoading(true);
-
-    const esACuenta = metodo === 'A Cuenta';
     
-    const nuevoPedido = {
-      telefono_cliente: esACuenta ? `A CUENTA: ${clienteSeleccionado?.nombre}` : "Venta Mostrador",
-      total: totalVenta,
-      estado: esACuenta ? "Pendiente de Pago" : "Pagado",
-      origen: "Mostrador",
-      metodo_pago: metodo,
-      cliente_id: clienteSeleccionado?.id || null,
-      detalle_pedido: cart.map(item => ({
-        sku: item.sku,
-        nombre: item.nombre,
-        quantity: item.quantity,
-        precio_venta: item.precio_venta,
-        unidad: item.unidad,
-        costo: item.costo
-      }))
-    };
+    setLoading(true); // INICIA SPINNER
 
-    const { error: errorPedido } = await supabase.from('pedidos').insert([nuevoPedido]);
+    try {
+      const esACuenta = metodo === 'A Cuenta';
+      
+      const nuevoPedido = {
+        telefono_cliente: esACuenta ? `A CUENTA: ${clienteSeleccionado?.nombre}` : "Venta Mostrador",
+        total: totalVenta,
+        estado: esACuenta ? "Pendiente de Pago" : "Pagado",
+        origen: "Mostrador",
+        metodo_pago: metodo,
+        cliente_id: clienteSeleccionado?.id || null,
+        detalle_pedido: cart.map(item => ({
+          sku: item.sku,
+          nombre: item.nombre,
+          quantity: item.quantity,
+          precio_venta: item.precio_venta,
+          unidad: item.unidad,
+          costo: item.costo
+        }))
+      };
 
-    if (!errorPedido) {
+      // 1. Insertar el Pedido
+      const { error: errorPedido } = await supabase.from('pedidos').insert([nuevoPedido]);
+      if (errorPedido) throw errorPedido;
+
+      // 2. Si es 'A Cuenta', incrementar deuda del cliente
       if (esACuenta && clienteSeleccionado) {
-        // --- AQUÍ CONECTAMOS CON LA JOYA 1 ---
-        await supabase.rpc('incrementar_deuda_cliente', { 
+        const { error: errorDeuda } = await supabase.rpc('incrementar_deuda_cliente', { 
           cliente_id: clienteSeleccionado.id, 
           monto: totalVenta 
         });
+        if (errorDeuda) throw errorDeuda;
       }
-      alert('✅ ¡Venta registrada con éxito!');
-      onBack();
-    } else {
-      alert('Error al registrar la venta en la base de datos.');
+
+      // 3. DESCONTAR STOCK (Crítico para Hugo)
+      for (const item of cart) {
+        const productRef = products.find(p => p.sku === item.sku);
+        if (productRef) {
+          const nuevoStock = productRef.stock_actual - item.quantity;
+          await supabase
+            .from('productos')
+            .update({ stock_actual: nuevoStock })
+            .eq('sku', item.sku);
+        }
+      }
+
+      alert('✅ ¡OPERACIÓN EXITOSA!');
+      onBack(); // Regresa al panel principal
+
+    } catch (error: any) {
+      console.error("Fallo en la operación:", error);
+      alert('❌ ERROR CRÍTICO: ' + (error.message || 'Error de conexión'));
+    } finally {
+      // ESTO MATA EL SPINNER PASE LO QUE PASE
+      setLoading(false); 
     }
-    setLoading(false);
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-50 z-50 flex flex-col md:flex-row font-sans">
+    <div className="fixed inset-0 bg-[#050505] z-50 flex flex-col md:flex-row font-sans text-white">
       
-      {/* SECCIÓN PRODUCTOS */}
-      <div className="flex-1 flex flex-col border-r border-gray-200">
-        <div className="p-4 bg-white border-b flex items-center gap-4">
-          <button onClick={onBack} className="text-2xl p-2 hover:bg-gray-100 rounded-full transition-all">⬅️</button>
+      {/* SECCIÓN PRODUCTOS (LADO IZQUIERDO) */}
+      <div className="flex-1 flex flex-col border-r border-white/5 bg-[#080808]">
+        <div className="p-6 bg-black/40 backdrop-blur-md border-b border-white/5 flex items-center gap-6">
+          <button onClick={onBack} className="text-2xl p-3 hover:bg-white/10 rounded-2xl transition-all">🔙</button>
           <input 
-            type="text" placeholder="🔍 BUSCAR PRODUCTO..." 
-            className="flex-1 p-4 rounded-2xl bg-gray-100 font-black text-lg outline-none focus:ring-4 focus:ring-green-100 transition-all"
+            type="text" placeholder="BUSCAR PRODUCTO..." 
+            className="flex-1 p-5 rounded-[24px] bg-white/5 border border-white/10 font-black text-lg outline-none focus:ring-4 focus:ring-green-500/20 transition-all text-white"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="flex-1 overflow-y-auto p-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-6">
           {products.filter(p => p.nombre.toLowerCase().includes(search.toLowerCase())).map(p => (
-            <button key={p.sku} onClick={() => addToCart(p)} className="bg-white p-4 rounded-[2rem] shadow-sm border-2 border-transparent hover:border-green-500 hover:scale-[1.02] transition-all flex flex-col items-center text-center group">
-              <img src={p.url_imagen} className="w-20 h-20 object-cover rounded-full mb-3 shadow-md group-hover:rotate-6 transition-transform" />
-              <p className="text-[10px] font-black uppercase text-gray-400 leading-tight h-8 flex items-center">{p.nombre}</p>
-              <p className="text-sm font-black text-green-600 mt-2">{formatCurrency(p.precio_venta)}</p>
+            <button key={p.sku} onClick={() => addToCart(p)} className="bg-white/5 p-6 rounded-[40px] border border-white/5 hover:border-green-500/50 hover:scale-[1.03] transition-all flex flex-col items-center text-center group relative overflow-hidden">
+              <img src={p.url_imagen} className="w-24 h-24 object-cover rounded-full mb-4 shadow-2xl group-hover:rotate-6 transition-transform" />
+              <p className="text-[10px] font-black uppercase text-gray-500 leading-tight mb-2">{p.nombre}</p>
+              <p className="text-lg font-black text-green-500">{formatCurrency(p.precio_venta)}</p>
+              {p.stock_actual <= 0 && <div className="absolute inset-0 bg-black/80 flex items-center justify-center font-black text-red-500 text-[10px] uppercase tracking-widest">Agotado</div>}
             </button>
           ))}
         </div>
       </div>
 
-      {/* SECCIÓN CAJA / TICKET */}
-      <div className="w-full md:w-[420px] bg-white shadow-2xl flex flex-col">
-        <div className="p-8 bg-gray-900 text-white rounded-bl-[3rem]">
-          <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40 mb-1">Terminal Punto de Venta</p>
-          <h2 className="text-3xl font-black italic uppercase tracking-tighter">Caja <span className="text-green-500">Amoree</span></h2>
+      {/* SECCIÓN CAJA / TICKET (LADO DERECHO) */}
+      <div className="w-full md:w-[450px] bg-black flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]">
+        <div className="p-10 bg-gradient-to-br from-gray-900 to-black rounded-bl-[4rem] border-b border-white/5">
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-green-500/50 mb-2">Terminal de Salida</p>
+          <h2 className="text-4xl font-black italic uppercase tracking-tighter">Caja <span className="text-green-500">Amoree</span></h2>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-8 space-y-6">
           {cart.map(item => (
-            <div key={item.sku} className="bg-gray-50 p-4 rounded-3xl border border-gray-100 relative">
-              <button onClick={() => setCart(cart.filter(i => i.sku !== item.sku))} className="absolute -top-2 -right-2 bg-red-500 text-white w-7 h-7 rounded-full text-xs font-black shadow-lg">✕</button>
-              <p className="text-[11px] font-black uppercase text-gray-800 mb-3 tracking-tighter">{item.nombre}</p>
+            <div key={item.sku} className="bg-white/[0.03] p-6 rounded-[32px] border border-white/5 relative group">
+              <button onClick={() => setCart(cart.filter(i => i.sku !== item.sku))} className="absolute -top-2 -right-2 bg-red-600 text-white w-8 h-8 rounded-full text-xs font-black shadow-xl scale-0 group-hover:scale-100 transition-transform">✕</button>
+              <p className="text-xs font-black uppercase text-gray-300 mb-4 tracking-tighter">{item.nombre}</p>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <input 
-                    type="number" step="0.001" value={item.quantity}
+                    type="number" step="0.05" value={item.quantity}
                     onChange={(e) => updateWeight(item.sku, parseFloat(e.target.value))}
-                    className="w-24 p-2 bg-white border-2 border-green-100 rounded-xl font-black text-center text-sm outline-none focus:border-green-500 transition-all"
+                    className="w-24 p-3 bg-black border border-white/10 rounded-xl font-black text-center text-green-500 outline-none focus:border-green-500"
                   />
-                  <span className="text-[10px] font-black text-gray-400 uppercase">{item.unidad}</span>
+                  <span className="text-[10px] font-black text-gray-600 uppercase">Unid.</span>
                 </div>
-                <p className="font-black text-gray-900">{formatCurrency(item.precio_venta * item.quantity)}</p>
+                <p className="text-xl font-black text-white">{formatCurrency(item.precio_venta * item.quantity)}</p>
               </div>
             </div>
           ))}
           {cart.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center opacity-20 py-20">
-               <span className="text-6xl mb-4">🛒</span>
-               <p className="font-black uppercase text-[10px] tracking-widest">Carrito Vacío</p>
+            <div className="h-full flex flex-col items-center justify-center py-20">
+               <span className="text-7xl mb-6 opacity-10">🛒</span>
+               <p className="font-black uppercase text-[10px] tracking-[0.3em] text-gray-700">Esperando Selección</p>
             </div>
           )}
         </div>
 
-        <div className="p-8 bg-gray-50 border-t border-gray-100">
-          <div className="flex justify-between items-end mb-8">
-            <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Total a Pagar</p>
-            <p className="text-4xl font-black text-gray-900 tracking-tighter leading-none">{formatCurrency(totalVenta)}</p>
+        {/* PIE DE TICKET - ACCIÓN PRINCIPAL */}
+        <div className="p-10 bg-white/[0.02] border-t border-white/5">
+          <div className="flex justify-between items-end mb-10">
+            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total de Venta</p>
+            <p className="text-5xl font-black text-white tracking-tighter leading-none">{formatCurrency(totalVenta)}</p>
           </div>
           <button 
             disabled={cart.length === 0}
             onClick={() => setShowPayment(true)}
-            className="w-full bg-green-600 text-white py-5 rounded-[2rem] font-black text-sm uppercase tracking-[0.2em] shadow-xl shadow-green-100 hover:bg-green-700 active:scale-95 transition-all disabled:opacity-30"
+            className="w-full bg-green-600 text-white py-6 rounded-[28px] font-black text-sm uppercase tracking-[0.2em] shadow-2xl shadow-green-600/20 hover:bg-green-500 active:scale-95 transition-all disabled:opacity-10"
           >
             💰 FINALIZAR VENTA
           </button>
         </div>
       </div>
 
-      {/* MODAL DE PAGO INTEGRADO */}
+      {/* MODAL DE PAGO (FULL GLASSMORPHISM) */}
       {showPayment && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white w-full max-w-lg rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300">
-            <h3 className="text-2xl font-black uppercase italic mb-8 text-center tracking-tighter">Seleccionar Pago</h3>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-6 z-[100]">
+          <div className="bg-[#0A0A0A] w-full max-w-xl rounded-[50px] p-12 border border-white/10 shadow-2xl">
+            <h3 className="text-3xl font-black uppercase italic mb-10 text-center text-white">Método de Cobro</h3>
             
-            <div className="grid grid-cols-2 gap-4 mb-8">
+            <div className="grid grid-cols-2 gap-4 mb-10">
               {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(m => (
                 <button 
                   key={m} onClick={() => setMetodo(m)}
-                  className={`py-5 rounded-3xl font-black text-[10px] uppercase tracking-[0.2em] border-2 transition-all ${
-                    metodo === m ? 'bg-gray-900 text-white border-gray-900 shadow-xl scale-105' : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100'
+                  className={`py-6 rounded-[24px] font-black text-[10px] uppercase tracking-widest border-2 transition-all ${
+                    metodo === m ? 'bg-white text-black border-white shadow-white/10 scale-105' : 'bg-white/5 text-gray-500 border-white/5 hover:bg-white/10'
                   }`}
                 >
                   {m}
@@ -174,21 +200,21 @@ export default function POS({ onBack }: { onBack: () => void }) {
             </div>
 
             {metodo === 'A Cuenta' && (
-              <div className="mb-8 animate-in slide-in-from-top-2">
-                <p className="text-[11px] font-black text-gray-400 uppercase mb-3 tracking-widest">Seleccionar Cliente Deudor</p>
+              <div className="mb-10 animate-in fade-in slide-in-from-top-4">
+                <p className="text-[10px] font-black text-gray-500 uppercase mb-4 tracking-widest">Cliente Deudor</p>
                 <select 
                   onChange={(e) => setClienteSeleccionado(clientes.find(c => c.id === parseInt(e.target.value)))}
-                  className="w-full p-5 rounded-2xl bg-gray-100 font-black text-sm border-0 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+                  className="w-full p-6 rounded-[22px] bg-white/5 border border-white/10 font-black text-sm text-white focus:border-green-500 transition-all outline-none"
                 >
-                  <option value="">-- ¿Quién debe? --</option>
+                  <option value="" className="bg-black">-- Seleccionar Cliente --</option>
                   {clientes.map(c => (
-                    <option key={c.id} value={c.id}>{c.nombre} (Debe: {formatCurrency(c.saldo_deudor)})</option>
+                    <option key={c.id} value={c.id} className="bg-black">{c.nombre} (Saldo: {formatCurrency(c.saldo_deudor)})</option>
                   ))}
                 </select>
                 {clienteSeleccionado && (
-                   <div className="mt-4 p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                      <p className="text-[10px] font-black text-blue-600 uppercase">Nueva Deuda Estimada</p>
-                      <p className="text-xl font-black text-blue-900">{formatCurrency(clienteSeleccionado.saldo_deudor + totalVenta)}</p>
+                   <div className="mt-6 p-6 bg-green-500/5 rounded-[22px] border border-green-500/20">
+                      <p className="text-[8px] font-black text-green-500 uppercase tracking-widest mb-1">Nueva Deuda Proyectada</p>
+                      <p className="text-2xl font-black text-white">{formatCurrency(clienteSeleccionado.saldo_deudor + totalVenta)}</p>
                    </div>
                 )}
               </div>
@@ -198,21 +224,21 @@ export default function POS({ onBack }: { onBack: () => void }) {
               <button 
                 onClick={handleFinalize}
                 disabled={loading || (metodo === 'A Cuenta' && !clienteSeleccionado)}
-                className="w-full bg-green-600 text-white py-5 rounded-[2rem] font-black uppercase text-xs tracking-widest shadow-xl disabled:opacity-20 transition-all"
+                className="w-full bg-green-600 text-white py-6 rounded-[25px] font-black uppercase text-xs tracking-[0.3em] shadow-2xl shadow-green-600/30 disabled:opacity-10 transition-all"
               >
-                {loading ? 'PROCESANDO...' : 'CONFIRMAR OPERACIÓN'}
+                {loading ? 'PROCESANDO TRANSACCIÓN...' : 'CONFIRMAR Y REGISTRAR'}
               </button>
-              <button onClick={() => setShowPayment(false)} className="py-2 font-black text-[10px] text-gray-400 uppercase tracking-widest">Volver</button>
+              <button onClick={() => setShowPayment(false)} className="py-2 font-black text-[9px] text-gray-600 uppercase tracking-[0.5em] hover:text-white transition-colors">Volver a la caja</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* SELLO DE GARANTÍA */}
-      <div className="fixed bottom-6 left-6 opacity-20 pointer-events-none hidden md:block">
-        <p className="text-[8px] font-black uppercase tracking-[0.5em] text-gray-900">Automatiza con Raul • TPV Master</p>
-      </div>
-
+      {/* INYECCIÓN DE ESTILO PARA INPUTS (Solución al contraste) */}
+      <style>{`
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        select { appearance: none; }
+      `}</style>
     </div>
   );
 }
