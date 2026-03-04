@@ -13,10 +13,12 @@ export default function AdminOrders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
 
-  // --- 1. MOTOR DE INFERENCIA DE DATOS (RADAR OMEGA V3) ---
+  // --- 1. MOTOR DE INFERENCIA SEMÁNTICA (RADAR OMEGA V4) ---
   const extraerDatos = (texto: string) => {
     const textoLimpio = texto || "";
+    // Detector de Teléfono (10-12 dígitos)
     const telMatch = textoLimpio.match(/(\d{10,12})/);
+    // Detector de Hora (Patrón XX:XX)
     const horaMatch = textoLimpio.match(/(\d{1,2}:\d{2})/);
     
     return {
@@ -67,12 +69,12 @@ export default function AdminOrders() {
         `¡Hola! Ya tenemos listo tu pedido y pesamos todo en tienda:%0A` +
         `--------------------------%0A` +
         (pedidoActual.detalle_pedido?.map((item: any) => {
-          // --- MOTOR DE UNIDADES SEMÁNTICO (TITANIUM) ---
+          // --- MOTOR DE UNIDADES V4: DETECCIÓN AGRESIVA ---
           const n = item.nombre.toLowerCase();
-          let unidad = 'kg'; // Estándar Amoree
+          let unidad = 'kg';
           
-          const pzaKeywords = ['pieza', 'lechuga', 'melón', 'sandía', 'coliflor', 'brócoli', 'piña', 'apio', 'pepino', 'coco'];
-          const manojoKeywords = ['manojo', 'cilantro', 'perejil', 'espinaca', 'acelga', 'rábano', 'cebollita', 'quelite'];
+          const pzaKeywords = ['pieza', 'lechuga', 'melón', 'sandía', 'coliflor', 'brócoli', 'piña', 'apio', 'pepino', 'coco', 'papaya', 'aguacate'];
+          const manojoKeywords = ['manojo', 'cilantro', 'perejil', 'espinaca', 'acelga', 'rábano', 'cebollita', 'epazote', 'hierbabuena'];
           
           if (pzaKeywords.some(k => n.includes(k))) unidad = 'pza';
           if (manojoKeywords.some(k => n.includes(k))) unidad = 'manojo';
@@ -86,11 +88,8 @@ export default function AdminOrders() {
         `⏰ *HORARIO DE ENTREGA:* ${formatHora(hora)}%0A` +
         `--------------------------%0A%0A` +
         `🏦 *DATOS DE PAGO:*%0A` +
-        `*Banco:* BBVA%0A` +
-        `*Titular:* Hugo Macario López%0A` +
-        `*CLABE:* 012 650 0152436789 0%0A` +
-        `*Concepto:* AMOREE ${telefono.slice(-10)}%0A%0A` + 
-        `Favor de enviar comprobante para liberar el envío. ¡Gracias! 🚀`;
+        `*Banco:* BBVA%0A*Titular:* Hugo Macario López%0A*CLABE:* 012 650 0152436789 0%0A*Concepto:* AMOREE ${telefono.slice(-10)}%0A%0A` + 
+        `Favor de enviar comprobante. ¡Gracias! 🚀`;
 
       window.open(`https://wa.me/${telefono.replace(/\D/g, '')}?text=${mensaje}`, '_blank');
       await supabase.from('pedidos').update({ total: totalFinal }).eq('id', orderId);
@@ -124,21 +123,21 @@ export default function AdminOrders() {
 
   if (loading) return (
     <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center">
-      <div className="w-16 h-16 border-[3px] border-green-500/20 border-t-green-500 rounded-full animate-spin"></div>
-      <p className="mt-6 text-[10px] font-black text-green-500 uppercase tracking-[0.5em] animate-pulse">Iniciando Sistemas...</p>
+      <div className="w-16 h-16 border-[3px] border-green-500/10 border-t-green-500 rounded-full animate-spin"></div>
+      <p className="mt-6 text-[10px] font-black text-green-500 uppercase tracking-[0.5em] animate-pulse">Sincronizando Sistemas...</p>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-[#050505] text-white/90 pb-32 font-sans selection:bg-green-500/30">
       
-      {/* --- HEADER TITANIUM: AEROSPACE CONTROL --- */}
-      <header className="bg-black/40 backdrop-blur-2xl border-b border-white/5 sticky top-0 z-50">
+      {/* --- HEADER TITANIUM GOLD: COCKPIT EDITION --- */}
+      <header className="bg-black/60 backdrop-blur-2xl border-b border-white/5 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-8 py-6 flex flex-col lg:flex-row items-center justify-between gap-8">
           
           <div className="flex items-center gap-6">
-            <div className="relative">
-              <div className="absolute -inset-2 bg-green-500/20 blur-2xl rounded-full"></div>
+            <div className="relative group">
+              <div className="absolute -inset-2 bg-green-500/10 blur-2xl rounded-full opacity-50 group-hover:opacity-100 transition duration-1000"></div>
               <div className="relative bg-gradient-to-br from-gray-900 to-black border border-white/10 rounded-2xl w-16 h-16 flex items-center justify-center text-3xl shadow-2xl">🥑</div>
             </div>
             <div>
@@ -151,12 +150,12 @@ export default function AdminOrders() {
             </div>
           </div>
 
-          <nav className="flex bg-white/[0.02] p-2 rounded-[30px] border border-white/5 shadow-2xl">
+          <nav className="flex bg-white/[0.02] p-2 rounded-[30px] border border-white/5 shadow-inner">
             {[
-              { id: 'orders', label: 'Centro de Pedidos', icon: '📦' },
+              { id: 'orders', label: 'Centro de Logística', icon: '📦' },
               { id: 'pos', label: 'Terminal TPV', icon: '⚡' },
-              { id: 'clients', label: 'Cartera Clientes', icon: '💳' },
-              { id: 'stats', label: 'BI & Analíticas', icon: '🧠' }
+              { id: 'clients', label: 'Gestión Cartera', icon: '💳' },
+              { id: 'stats', label: 'Business Intelligence', icon: '🧠' }
             ].map((v) => (
               <button 
                 key={v.id} 
@@ -190,19 +189,17 @@ export default function AdminOrders() {
         {view === 'orders' ? (
           <>
             <div className="flex flex-col md:flex-row gap-8 mb-20">
-              <div className="flex-1 group">
-                <input 
-                  type="text" 
-                  placeholder="Escaneando base de datos por teléfono..." 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)} 
-                  className="w-full bg-white/[0.03] border border-white/5 px-10 py-7 rounded-[35px] text-white text-sm focus:outline-none focus:border-green-500/50 transition-all placeholder:text-gray-700"
-                />
-              </div>
+              <input 
+                type="text" 
+                placeholder="Escaneando base de datos por teléfono..." 
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+                className="flex-1 bg-white/[0.03] border border-white/5 px-10 py-7 rounded-[35px] text-white text-sm focus:outline-none focus:border-green-500/50 transition-all"
+              />
               <select 
                 value={statusFilter} 
                 onChange={(e) => setStatusFilter(e.target.value)} 
-                className="bg-black border border-white/5 px-10 py-7 rounded-[35px] text-sm font-black text-gray-500 focus:outline-none focus:border-green-500/50 appearance-none cursor-pointer"
+                className="bg-black border border-white/5 px-10 py-7 rounded-[35px] text-sm font-black text-gray-500 focus:outline-none appearance-none cursor-pointer"
               >
                 {['Todos', 'Pendiente', 'Pendiente de Pago', 'Pagado - Por Entregar', 'Finalizado'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -215,7 +212,7 @@ export default function AdminOrders() {
                   <div key={order.id} className="group bg-[#0A0A0A] border border-white/5 rounded-[60px] p-12 hover:border-white/20 transition-all duration-1000 relative shadow-2xl">
                     <div className="flex justify-between items-start mb-14">
                       <div>
-                        <p className="text-[10px] font-black text-gray-600 uppercase tracking-[0.5em] mb-4">ID Transacción</p>
+                        <p className="text-[10px] font-black text-gray-600 uppercase tracking-[0.5em] mb-4">Registro Transaccional</p>
                         <h3 className="text-3xl font-black text-white tracking-tighter">{telefono}</h3>
                       </div>
                       <div className={`px-6 py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest border ${
@@ -235,7 +232,7 @@ export default function AdminOrders() {
                             type="number" 
                             value={item.quantity} 
                             onChange={(e) => updateItemQuantity(order.id, item.id, parseFloat(e.target.value))} 
-                            className="w-24 bg-black border border-white/10 text-center rounded-2xl py-3 text-sm font-black text-white" 
+                            className="w-24 bg-black border border-white/10 text-center rounded-2xl py-3 text-sm font-black text-white focus:border-green-500" 
                             step="0.05" 
                           />
                         </div>
@@ -244,13 +241,12 @@ export default function AdminOrders() {
 
                     <div className="flex items-center justify-between pt-12 border-t border-white/5">
                       <div>
-                        <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">Total Neto</p>
+                        <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-2">Monto Neto</p>
                         <p className="text-4xl font-black text-white">{formatCurrency(order.total)}</p>
                       </div>
                       <div className="flex gap-4">
-                        {order.estado === 'Pendiente' && <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-10 py-5 rounded-[25px] text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-green-600/20 hover:scale-105 transition-all">⚖️ Surtir</button>}
+                        {order.estado === 'Pendiente' && <button onClick={() => updateStatus(order.id, 'Pendiente de Pago')} className="bg-green-600 text-white px-10 py-5 rounded-[25px] text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-green-600/20 hover:scale-105 transition-all">⚖️ Confirmar</button>}
                         {order.estado === 'Pendiente de Pago' && <button onClick={() => updateStatus(order.id, 'Pagado - Por Entregar')} className="bg-white text-black px-10 py-5 rounded-[25px] text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all">💰 Liquidar</button>}
-                        {order.estado === 'Pagado - Por Entregar' && <button onClick={() => updateStatus(order.id, 'Finalizado')} className="bg-white/5 text-white px-10 py-5 rounded-[25px] text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all">📦 Cerrar</button>}
                       </div>
                     </div>
                   </div>
@@ -261,28 +257,37 @@ export default function AdminOrders() {
         ) : view === 'pos' ? <POS /> : view === 'stats' ? <Dashboard /> : <ClientsModule />}
       </main>
 
-      {/* --- BOTÓN "MASTER CONSOLE" --- */}
-      <div className="fixed bottom-12 right-12 z-[60]">
-        <button 
-          onClick={() => setView('stats')}
-          className="group relative p-8 bg-white text-black rounded-[35px] shadow-[0_0_80px_rgba(255,255,255,0.1)] hover:scale-110 transition-all duration-500"
-        >
-          <div className="relative flex items-center gap-4">
-             <span className="text-3xl">📋</span>
-             <span className="text-[11px] font-black uppercase tracking-[0.3em] hidden lg:block">Panel de Control</span>
-          </div>
-        </button>
-      </div>
+      {/* --- BOTÓN "MASTER CONSOLE" - OCULTO EN TPV PARA EVITAR OBSTRUCCIÓN --- */}
+      {view !== 'pos' && (
+        <div className="fixed bottom-12 right-12 z-[60]">
+          <button 
+            onClick={() => setView('stats')}
+            className="group relative p-8 bg-white text-black rounded-[35px] shadow-[0_0_80px_rgba(255,255,255,0.1)] hover:scale-110 transition-all duration-500"
+          >
+            <div className="relative flex items-center gap-4">
+               <span className="text-3xl">📋</span>
+               <span className="text-[11px] font-black uppercase tracking-[0.3em] hidden lg:block">Panel Maestro</span>
+            </div>
+          </button>
+        </div>
+      )}
 
+      {/* SELLO DE GARANTÍA SWISS MADE */}
       <div className="fixed bottom-12 left-12 z-[60]">
          <div className="bg-black/80 backdrop-blur-3xl border border-white/10 p-7 rounded-[40px] flex items-center gap-6 shadow-2xl">
-            <div className="w-14 h-14 bg-gradient-to-br from-green-500 to-emerald-900 rounded-2xl flex items-center justify-center text-3xl shadow-xl">🚀</div>
+            <div className="w-14 h-14 bg-gradient-to-br from-green-500 to-emerald-900 rounded-2xl flex items-center justify-center text-3xl shadow-xl shadow-green-600/10">🚀</div>
             <div>
                <p className="text-[12px] font-black text-white uppercase tracking-tighter leading-none mb-1">Automatiza con Raul</p>
                <p className="text-[9px] font-bold text-green-500/40 uppercase tracking-[0.4em]">Next-Gen Software Lab</p>
             </div>
          </div>
       </div>
+
+      {/* --- INYECCIÓN DE ESTILO GLOBAL PARA CONTRASTE EN MODALES --- */}
+      <style>{`
+        input, .amount-input { color: #000000 !important; font-weight: 900 !important; }
+        ::placeholder { color: #999 !important; }
+      `}</style>
     </div>
   );
 }
