@@ -1,124 +1,139 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { startOfDay, endOfDay, subDays, isWithinInterval, format, isSameDay } from 'date-fns';
+import { startOfDay, endOfDay, subDays, isWithinInterval, format, isSameDay, startOfWeek, endOfWeek, startOfMonth } from 'date-fns';
 
 export default function Dashboard() {
+  const [activeTab, setActiveTab] = useState(1);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     ventasHoy: 0,
+    ventasSemana: 0,
     ventasMes: 0,
     ticketPromedio: 0,
-    utilidad: 0,
-    transacciones: 0,
-    vsAyer: 0,
-    ventaApp: 0,
-    ventaLocal: 0
+    utilidadHoy: 0,
+    vsAyer: 0
   });
 
-  const fetchData = async () => {
-    setLoading(true);
-    const today = new Date();
-    const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    
-    const { data: pedidos } = await supabase.from('pedidos')
-      .select('*')
-      .in('estado', ['Pagado - Por Entregar', 'Finalizado', 'Pagado']);
+  // --- LÓGICA DE NAVEGACIÓN Y CARGA DE DATOS ---
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
 
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    const now = new Date();
+    
+    // Consultas a Pedidos, Merma y Compras
+    const { data: pedidos } = await supabase.from('pedidos').select('*').in('estado', ['Pagado - Por Entregar', 'Finalizado', 'Pagado']);
+    
     if (pedidos) {
-      const hoy = pedidos.filter(p => isSameDay(new Date(p.created_at), today));
-      const ayer = pedidos.filter(p => isSameDay(new Date(p.created_at), subDays(today, 1)));
-      const mes = pedidos.filter(p => new Date(p.created_at) >= startMonth);
+      const hoy = pedidos.filter(p => isSameDay(new Date(p.created_at), now));
+      const ayer = pedidos.filter(p => isSameDay(new Date(p.created_at), subDays(now, 1)));
+      const semana = pedidos.filter(p => isWithinInterval(new Date(p.created_at), { start: startOfWeek(now), end: endOfWeek(now) }));
+      const mes = pedidos.filter(p => new Date(p.created_at) >= startOfMonth(now));
 
       const vHoy = hoy.reduce((a, b) => a + b.total, 0);
       const vAyer = ayer.reduce((a, b) => a + b.total, 0);
-      const vMes = mes.reduce((a, b) => a + b.total, 0);
-      
+
       setStats({
         ventasHoy: vHoy,
-        ventasMes: vMes,
+        ventasSemana: semana.reduce((a, b) => a + b.total, 0),
+        ventasMes: mes.reduce((a, b) => a + b.total, 0),
         ticketPromedio: vHoy / (hoy.length || 1),
-        utilidad: vMes * 0.25, // Estimado 25%
-        transacciones: hoy.length,
-        vsAyer: vAyer > 0 ? ((vHoy - vAyer) / vAyer) * 100 : 0,
-        ventaApp: hoy.filter(p => p.origen !== 'Mostrador').reduce((a,b) => a+b.total, 0),
-        ventaLocal: hoy.filter(p => p.origen === 'Mostrador').reduce((a,b) => a+b.total, 0)
+        utilidadHoy: vHoy * 0.25, // Estimado inicial
+        vsAyer: vAyer > 0 ? ((vHoy - vAyer) / vAyer) * 100 : 0
       });
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  const tabs = [
+    { id: 1, label: 'Ejecutivo', icon: '🎯' },
+    { id: 2, label: 'Ventas', icon: '💰' },
+    { id: 3, label: 'Inventario', icon: '📦' },
+    { id: 4, label: 'Merma', icon: '🗑️' },
+    { id: 5, label: 'Rentabilidad', icon: '📊' },
+    { id: 6, label: 'Compras', icon: '🛒' },
+    { id: 7, label: 'Alertas', icon: '🚨' }
+  ];
 
   return (
-    <div className="bg-[#050505] p-8 rounded-[50px] space-y-10 border border-white/5">
-      <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-4xl font-black tracking-tighter italic uppercase">Cockpit <span className="text-green-500">Ejecutivo</span></h2>
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.4em] mt-2">Inteligencia de Datos Amoree</p>
-        </div>
-        <div className="bg-white/5 px-6 py-3 rounded-2xl border border-white/10 text-right">
-          <p className="text-[8px] font-black text-gray-500 uppercase">Status Operativo</p>
-          <p className="text-xs font-black text-green-500 animate-pulse">OPTIMIZADO</p>
-        </div>
+    <div className="bg-[#050505] min-h-screen p-4 md:p-8 space-y-8 text-white">
+      {/* NAVEGACIÓN DE 7 PESTAÑAS (SCROLLABLE EN MÓVIL) */}
+      <div className="flex overflow-x-auto gap-2 pb-4 no-scrollbar border-b border-white/5">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+              activeTab === tab.id ? 'bg-green-600 text-white shadow-lg shadow-green-600/20 scale-105' : 'bg-white/5 text-gray-500 hover:text-white'
+            }`}
+          >
+            <span>{tab.icon}</span> {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* KPIS PRINCIPALES */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white/5 p-8 rounded-[40px] border border-white/10 shadow-2xl">
-          <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Ventas Hoy</p>
-          <p className="text-4xl font-black text-white">{formatCurrency(stats.ventasHoy)}</p>
-          <p className={`text-[10px] font-black mt-2 ${stats.vsAyer >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-            {stats.vsAyer >= 0 ? '▲' : '▼'} {Math.abs(stats.vsAyer).toFixed(1)}% vs Ayer
-          </p>
-        </div>
-        <div className="bg-green-600 p-8 rounded-[40px] shadow-2xl shadow-green-600/20">
-          <p className="text-[9px] font-black text-white/50 uppercase tracking-widest mb-3">Ticket Promedio</p>
-          <p className="text-4xl font-black text-white">{formatCurrency(stats.ticketPromedio)}</p>
-          <p className="text-[10px] font-black mt-2 text-white/70 uppercase">{stats.transacciones} Transacciones</p>
-        </div>
-        <div className="bg-white/5 p-8 rounded-[40px] border border-white/10">
-          <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Venta del Mes</p>
-          <p className="text-4xl font-black text-white">{formatCurrency(stats.ventasMes)}</p>
-        </div>
-        <div className="bg-white/5 p-8 rounded-[40px] border border-white/10">
-          <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Utilidad (Est.)</p>
-          <p className="text-4xl font-black text-green-500">{formatCurrency(stats.utilidad)}</p>
-        </div>
-      </div>
-
-      {/* ANALISIS DE CANAL */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-white/[0.02] p-10 rounded-[50px] border border-white/5">
-          <h3 className="text-lg font-black uppercase italic mb-8 tracking-tighter">Rendimiento por Canal</h3>
+      {/* RENDERIZADO DE PESTAÑAS */}
+      <div className="animate-in fade-in duration-500">
+        {activeTab === 1 && (
           <div className="space-y-8">
-            <div>
-              <div className="flex justify-between text-[10px] font-black uppercase mb-3">
-                <span className="text-blue-500">🛒 App Amoree</span>
-                <span>{formatCurrency(stats.ventaApp)}</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white/5 p-8 rounded-[40px] border border-white/10">
+                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Ventas Hoy</p>
+                <p className="text-4xl font-black">{formatCurrency(stats.ventasHoy)}</p>
+                <p className={`text-[10px] font-bold mt-2 ${stats.vsAyer >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {stats.vsAyer >= 0 ? '▲' : '▼'} {Math.abs(stats.vsAyer).toFixed(1)}% vs Ayer
+                </p>
               </div>
-              <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" style={{ width: `${(stats.ventaApp/(stats.ventasHoy||1))*100}%` }}></div>
+              <div className="bg-white/5 p-8 rounded-[40px] border border-white/10">
+                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Semana Actual</p>
+                <p className="text-4xl font-black">{formatCurrency(stats.ventasSemana)}</p>
+              </div>
+              <div className="bg-white/5 p-8 rounded-[40px] border border-white/10">
+                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Mes Actual</p>
+                <p className="text-4xl font-black">{formatCurrency(stats.ventasMes)}</p>
               </div>
             </div>
-            <div>
-              <div className="flex justify-between text-[10px] font-black uppercase mb-3">
-                <span className="text-orange-500">🏪 Venta en Local</span>
-                <span>{formatCurrency(stats.ventaLocal)}</span>
-              </div>
-              <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.5)]" style={{ width: `${(stats.ventaLocal/(stats.ventasHoy||1))*100}%` }}></div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               <div className="bg-green-600 p-10 rounded-[50px] shadow-2xl shadow-green-600/20">
+                  <p className="text-[10px] font-black text-white/50 uppercase tracking-widest mb-2">Ticket Promedio</p>
+                  <p className="text-5xl font-black text-white">{formatCurrency(stats.ticketPromedio)}</p>
+               </div>
+               <div className="bg-white/5 p-10 rounded-[50px] border border-white/10 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Utilidad Estimada (Hoy)</p>
+                    <p className="text-4xl font-black text-green-500">{formatCurrency(stats.utilidadHoy)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[8px] font-black text-gray-600 uppercase mb-1 tracking-tighter">Margen Promedio</p>
+                    <p className="text-2xl font-black text-white">25%</p>
+                  </div>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 4 && (
+          <div className="max-w-4xl mx-auto space-y-8">
+            <div className="bg-white/5 p-10 rounded-[50px] border border-white/10">
+              <h3 className="text-2xl font-black uppercase italic mb-8 tracking-tighter">Registro Rápido de Merma</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Aquí implementaremos la selección de producto y cantidad */}
+                <p className="text-gray-500 text-xs italic">Panel de ingreso de desperdicios en desarrollo...</p>
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="bg-white/[0.02] p-10 rounded-[50px] border border-white/5 flex flex-col items-center justify-center text-center">
-            <div className="bg-green-600/10 w-20 h-20 rounded-full flex items-center justify-center text-3xl mb-4 border border-green-500/20">🚀</div>
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-gray-400">Automatizado por</p>
-            <p className="text-2xl font-black text-white uppercase tracking-tighter">Raul Lizardi</p>
-            <p className="text-[8px] font-bold text-green-500 uppercase tracking-widest mt-2 px-4 py-1 border border-green-500/20 rounded-full">Engineering Partner</p>
-        </div>
+        )}
+        
+        {/* Los demás contenidos se inyectarán paso a paso */}
+        {[2,3,5,6,7].includes(activeTab) && (
+          <div className="p-20 text-center bg-white/5 rounded-[50px] border border-dashed border-white/10">
+            <p className="text-[10px] font-black text-gray-600 uppercase tracking-[0.5em]">Módulo en Fase de Calibración</p>
+          </div>
+        )}
       </div>
     </div>
   );
