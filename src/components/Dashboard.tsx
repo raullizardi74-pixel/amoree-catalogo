@@ -12,27 +12,33 @@ import {
 } from 'date-fns';
 import { es } from 'date-fns/locale/es';
 
+// Función auxiliar local para forzar 0 decimales en moneda si el util no lo hace
+const formatCurrencyZero = (value: number) => {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.round(value));
+};
+
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState(1);
   const [loading, setLoading] = useState(true);
   
-  // --- ESTADOS DE FILTRO MAESTRO ---
   const [rango, setRango] = useState<'hoy' | '7d' | '30d' | 'custom'>('7d');
   const [fechaInicio, setFechaInicio] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(new Date(), 'yyyy-MM-dd'));
 
-  // --- REPOSITORIO DE DATOS ---
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
   const [mermas, setMermas] = useState<any[]>([]);
   const [compras, setCompras] = useState<any[]>([]);
 
-  // Registro de Merma
   const [skuMerma, setSkuMerma] = useState('');
   const [cantMerma, setCantMerma] = useState('');
   const [motivoMerma, setMotivoMerma] = useState('Merma Natural');
 
-  // Metas Fijas por Categoría
   const GOALS: any = { 'Verduras': 35, 'Frutas': 35, 'Cremería': 25, 'Abarrotes': 15 };
 
   useEffect(() => {
@@ -53,7 +59,6 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
-  // --- MASTER DATA ENGINE (PROCESAMIENTO TOTAL) ---
   const engine = useMemo(() => {
     const ahora = new Date();
     let inicio: Date, fin: Date;
@@ -67,10 +72,9 @@ export default function Dashboard() {
     const mRange = mermas.filter(m => isWithinInterval(new Date(m.created_at), { start: inicio, end: fin }));
     const cRange = compras.filter(c => isWithinInterval(new Date(c.created_at), { start: inicio, end: fin }));
 
-    const vTotal = pRange.reduce((a, b) => a + b.total, 0);
-    const mTotal = mRange.reduce((a, b) => a + (b.total_perdida || 0), 0);
+    const vTotal = Math.round(pRange.reduce((a, b) => a + b.total, 0));
+    const mTotal = Math.round(mRange.reduce((a, b) => a + (b.total_perdida || 0), 0));
 
-    // 1. Análisis por Categoría (Ventas y Margen Real)
     const catAnalysis: any = {};
     pRange.forEach(p => p.detalle_pedido?.forEach((i: any) => {
       const c = i.categoria || 'Otros';
@@ -81,51 +85,47 @@ export default function Dashboard() {
 
     const chartCategorias = Object.entries(catAnalysis).map(([name, data]: any) => ({
       name,
-      value: data.venta,
-      margin: data.venta > 0 ? ((data.venta - data.costo) / data.venta) * 100 : 0
+      value: Math.round(data.venta),
+      margin: data.venta > 0 ? Math.round(((data.venta - data.costo) / data.venta) * 100) : 0
     }));
 
-    // 2. Métodos de Pago (Corregido visibilidad)
     const pagoData: any = {};
     pRange.forEach(p => {
       const m = p.metodo_pago || 'Efectivo';
       pagoData[m] = (pagoData[m] || 0) + p.total;
     });
-    const chartPagos = Object.entries(pagoData).map(([name, value]) => ({ name, value }));
+    const chartPagos = Object.entries(pagoData).map(([name, value]) => ({ name, value: Math.round(value as number) }));
 
-    // 3. Ventas por Horario
     const horasData = Array.from({ length: 13 }, (_, i) => ({ hora: `${i + 8}:00`, total: 0 }));
     pRange.forEach(p => {
       const h = getHours(new Date(p.created_at));
       if (h >= 8 && h <= 20) horasData[h - 8].total += p.total;
     });
+    const chartHoras = horasData.map(d => ({ ...d, total: Math.round(d.total) }));
 
-    // 4. Inventario: Rotación y Días
     const numDias = differenceInDays(fin, inicio) || 1;
     const invData = productos.map(p => {
       const vendido = pRange.reduce((acc, ped) => acc + (ped.detalle_pedido?.filter((i:any) => i.sku === p.sku).reduce((s:any, i:any) => s + i.quantity, 0) || 0), 0);
       const vtaDiaria = vendido / numDias;
       const diasInv = vtaDiaria > 0 ? p.stock_actual / vtaDiaria : 0;
-      return { ...p, vtaDiaria, diasInv };
+      return { ...p, stock_actual: Math.round(p.stock_actual), diasInv: Math.round(diasInv) };
     });
 
-    // 5. Comparativo Periodo Anterior
     const duracion = fin.getTime() - inicio.getTime();
     const pAnt = pedidos.filter(p => isWithinInterval(new Date(p.created_at), { start: new Date(inicio.getTime() - duracion), end: new Date(inicio.getTime()) }));
     const vAnt = pAnt.reduce((a, b) => a + b.total, 0);
 
-    // 6. Top 5
     const prodCounts: any = {};
     pRange.forEach(p => p.detalle_pedido?.forEach((i: any) => {
       prodCounts[i.nombre] = (prodCounts[i.nombre] || 0) + i.quantity;
     }));
-    const top5 = Object.entries(prodCounts).sort(([,a]:any, [,b]:any) => b - a).slice(0, 5);
+    const top5 = Object.entries(prodCounts).sort(([,a]:any, [,b]:any) => b - a).slice(0, 5).map(([n, q]) => [n, Math.round(q as number)]);
 
     return {
-      vTotal, mTotal, ticket: vTotal / (pRange.length || 1), count: pRange.length,
-      vsAnterior: vAnt > 0 ? ((vTotal - vAnt) / vAnt) * 100 : 0,
-      chartCategorias, chartPagos, chartHoras: horasData, top5, invData,
-      comprasTotal: cRange.reduce((a, b) => a + (b.total_compra || 0), 0),
+      vTotal, mTotal, ticket: Math.round(vTotal / (pRange.length || 1)), count: pRange.length,
+      vsAnterior: Math.round(vAnt > 0 ? ((vTotal - vAnt) / vAnt) * 100 : 0),
+      chartCategorias, chartPagos, chartHoras, top5, invData,
+      comprasTotal: Math.round(cRange.reduce((a, b) => a + (b.total_compra || 0), 0)),
       cRange, mRange
     };
   }, [rango, fechaInicio, fechaFin, pedidos, productos, mermas, compras]);
@@ -137,8 +137,8 @@ export default function Dashboard() {
   return (
     <div className="bg-[#050505] min-h-screen p-4 md:p-10 text-white font-sans selection:bg-green-500/30">
       
-      {/* --- SELECTOR DE TIEMPO MAESTRO --- */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10 bg-[#0A0A0A] p-6 rounded-[35px] border border-white/5 shadow-2xl">
+      {/* SELECTORES DE TIEMPO */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10 bg-[#0A0A0A] p-6 rounded-[35px] border border-white/5">
         <div className="flex bg-white/5 p-1.5 rounded-2xl gap-2 overflow-x-auto no-scrollbar">
           {['hoy', '7d', '30d', 'custom'].map(id => (
             <button key={id} onClick={() => setRango(id as any)} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${rango === id ? 'bg-white text-black shadow-xl' : 'text-gray-500'}`}>{id}</button>
@@ -153,7 +153,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* --- NAVEGACIÓN DE 7 PESTAÑAS --- */}
+      {/* TABS NAVEGACIÓN */}
       <div className="flex overflow-x-auto gap-3 pb-6 border-b border-white/5 mb-10 no-scrollbar sticky top-0 bg-[#050505] z-50">
         {[
           { id: 1, label: 'Ejecutivo', icon: '🎯' },
@@ -172,28 +172,30 @@ export default function Dashboard() {
 
       <main className="animate-in fade-in duration-700">
         
-        {/* (1) EJECUTIVO: REDISTRIBUIDO */}
+        {/* PESTAÑA 1: EJECUTIVO */}
         {activeTab === 1 && (
           <div className="space-y-10">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
                 <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Venta Total</p>
-                <p className="text-4xl font-black tracking-tighter">{formatCurrency(engine.vTotal)}</p>
+                <p className="text-4xl font-black tracking-tighter">{formatCurrencyZero(engine.vTotal)}</p>
                 <div className={`mt-2 text-[10px] font-black ${engine.vsAnterior >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {engine.vsAnterior >= 0 ? '▲' : '▼'} {Math.abs(engine.vsAnterior).toFixed(1)}% vs anterior
+                  {engine.vsAnterior >= 0 ? '▲' : '▼'} {Math.abs(engine.vsAnterior)}% vs anterior
                 </div>
               </div>
               <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
                 <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Ticket Promedio</p>
-                <p className="text-4xl font-black tracking-tighter">{formatCurrency(engine.ticket)}</p>
+                <p className="text-4xl font-black tracking-tighter">{formatCurrencyZero(engine.ticket)}</p>
               </div>
               <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
                 <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-3">Merma Periodo</p>
-                <p className="text-4xl font-black text-red-500 tracking-tighter">{formatCurrency(engine.mTotal)}</p>
+                <p className="text-4xl font-black text-red-500 tracking-tighter">{formatCurrencyZero(engine.mTotal)}</p>
               </div>
               <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
-                <p className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-3">Margen Bruto Real</p>
-                <p className="text-4xl font-black text-green-500 tracking-tighter">{engine.chartCategorias.reduce((a,b)=>a+b.margin,0)/ (engine.chartCategorias.length || 1).toFixed(1)}%</p>
+                <p className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-3">Margen Real</p>
+                <p className="text-4xl font-black text-green-500 tracking-tighter">
+                  {(engine.chartCategorias.reduce((a,b)=>a+b.margin,0) / (engine.chartCategorias.length || 1)).toFixed(0)}%
+                </p>
               </div>
             </div>
 
@@ -204,18 +206,18 @@ export default function Dashboard() {
                     {engine.top5.map(([name, qty]: any) => (
                       <div key={name} className="flex justify-between items-center p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
                         <span className="text-xs font-bold text-gray-400 uppercase">{name}</span>
-                        <span className="text-xs font-black text-white">{qty.toFixed(2)} kg/pza</span>
+                        <span className="text-xs font-black text-white">{qty} kg/pza</span>
                       </div>
                     ))}
                   </div>
                </div>
                <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-                  <h3 className="text-xl font-black italic uppercase mb-8 tracking-tighter">Inventario Agotado</h3>
+                  <h3 className="text-xl font-black italic uppercase mb-8 tracking-tighter">Alertas de Stock</h3>
                   <div className="space-y-4">
                     {productos.filter(p => p.stock_actual <= 0).slice(0, 4).map(p => (
                       <div key={p.sku} className="flex justify-between items-center p-4 bg-red-600/5 border border-red-600/20 rounded-2xl">
                         <span className="text-xs font-bold text-red-500 uppercase">{p.nombre}</span>
-                        <span className="text-xs font-black text-white">SIN STOCK</span>
+                        <span className="text-xs font-black text-white">AGOTADO</span>
                       </div>
                     ))}
                   </div>
@@ -224,7 +226,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* (2) VENTAS: CORREGIDO COLORES Y TEXTOS */}
+        {/* PESTAÑA 2: VENTAS */}
         {activeTab === 2 && (
           <div className="space-y-10">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -253,7 +255,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[400px]">
-              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest text-center">Intensidad de Ventas por Horario</h3>
+              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest text-center">Ventas por Horario</h3>
               <ResponsiveContainer width="100%" height="80%">
                 <BarChart data={engine.chartHoras}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
@@ -266,10 +268,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* (3) INVENTARIO: ROTACIÓN Y DÍAS */}
+        {/* PESTAÑA 3: INVENTARIO */}
         {activeTab === 3 && (
           <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 overflow-x-auto">
-            <h3 className="text-xl font-black italic uppercase mb-8">Estado de Existencias y Rotación</h3>
+            <h3 className="text-xl font-black italic uppercase mb-8">Rotación de Inventario</h3>
             <table className="w-full text-left">
               <thead>
                 <tr className="text-[10px] font-black text-gray-500 uppercase border-b border-white/5">
@@ -284,7 +286,7 @@ export default function Dashboard() {
                   <tr key={p.sku} className="hover:bg-white/[0.02]">
                     <td className="py-6 font-bold text-xs uppercase">{p.nombre}</td>
                     <td className="py-6 font-black text-sm">{p.stock_actual} {p.unidad}</td>
-                    <td className="py-6 font-black text-sm text-green-500">{p.diasInv.toFixed(1)} días</td>
+                    <td className="py-6 font-black text-sm text-green-500">{p.diasInv} días</td>
                     <td className="py-6">
                        {p.stock_actual <= 0 ? <span className="bg-red-600 px-3 py-1 rounded-full text-[8px] font-black">AGOTADO</span> :
                         p.diasInv < 1 ? <span className="bg-amber-600 px-3 py-1 rounded-full text-[8px] font-black">REABASTECER</span> :
@@ -297,7 +299,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* (4) MERMA: REGISTRO Y HISTORIAL */}
+        {/* PESTAÑA 4: MERMA */}
         {activeTab === 4 && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
             <div className="lg:col-span-1 bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-fit shadow-2xl">
@@ -311,9 +313,15 @@ export default function Dashboard() {
                 <button onClick={async () => {
                   const p = productos.find(x => x.sku === skuMerma);
                   if(!p || !cantMerma) return;
-                  const { error } = await supabase.from('merma').insert([{ producto_sku: p.sku, nombre_producto: p.nombre, cantidad: parseFloat(cantMerma), unidad: p.unidad, costo_unitario: p.costo, total_perdida: parseFloat(cantMerma)*p.costo, motivo: motivoMerma, categoria: p.categoria }]);
-                  if(!error) { await supabase.from('productos').update({ stock_actual: (p.stock_actual || 0) - parseFloat(cantMerma) }).eq('sku', p.sku); alert("Registrado ✅"); setCantMerma(''); setSkuMerma(''); }
-                }} className="w-full bg-red-600 text-white py-6 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl">🗑️ Registrar</button>
+                  const perdida = Math.round(parseFloat(cantMerma) * (p.costo || 0));
+                  await supabase.from('merma').insert([{ 
+                    producto_sku: p.sku, nombre_producto: p.nombre, cantidad: parseFloat(cantMerma), 
+                    unidad: p.unidad, costo_unitario: p.costo, total_perdida: perdida, 
+                    motivo: motivoMerma, categoria: p.categoria 
+                  }]);
+                  await supabase.from('productos').update({ stock_actual: (p.stock_actual || 0) - parseFloat(cantMerma) }).eq('sku', p.sku);
+                  alert("Registrado ✅"); setCantMerma(''); setSkuMerma('');
+                }} className="w-full bg-red-600 text-white py-6 rounded-3xl font-black uppercase text-xs tracking-widest">🗑️ Registrar</button>
               </div>
             </div>
             <div className="lg:col-span-2 bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[500px] overflow-y-auto">
@@ -321,22 +329,22 @@ export default function Dashboard() {
               {engine.mRange.map(m => (
                 <div key={m.id} className="flex justify-between items-center p-6 bg-white/[0.02] border border-white/5 rounded-3xl mb-3">
                   <div><p className="text-xs font-black uppercase">{m.nombre_producto}</p><p className="text-[9px] text-gray-500 font-bold uppercase">{format(new Date(m.created_at), 'dd MMM')} • {m.motivo}</p></div>
-                  <p className="text-sm font-black text-red-500">-{formatCurrency(m.total_perdida)}</p>
+                  <p className="text-sm font-black text-red-500">-{formatCurrencyZero(m.total_perdida)}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* (5) RENTABILIDAD: REAL VS OBJETIVO */}
+        {/* PESTAÑA 5: RENTABILIDAD */}
         {activeTab === 5 && (
           <div className="space-y-10">
-            <h3 className="text-xl font-black italic uppercase tracking-tighter">Rentabilidad por Categoría (Real vs Objetivo)</h3>
+            <h3 className="text-xl font-black italic uppercase tracking-tighter text-green-500">Margen Real vs Objetivo</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {engine.chartCategorias.map(cat => (
-                <div key={cat.name} className="bg-[#0A0A0A] p-10 rounded-[45px] border border-white/5 text-center">
+                <div key={cat.name} className="bg-[#0A0A0A] p-10 rounded-[45px] border border-white/5 text-center transition-transform hover:scale-105">
                   <p className="text-[10px] font-black text-gray-500 uppercase mb-4 tracking-widest">{cat.name}</p>
-                  <p className="text-4xl font-black text-green-500 mb-2">{cat.margin.toFixed(1)}%</p>
+                  <p className="text-4xl font-black text-green-500 mb-2">{cat.margin.toFixed(0)}%</p>
                   <p className="text-[9px] font-bold text-gray-600 uppercase">Objetivo: {GOALS[cat.name] || 'N/A'}%</p>
                   <div className="mt-4 h-2 bg-white/5 rounded-full overflow-hidden">
                     <div className="h-full bg-green-500 transition-all duration-1000" style={{ width: `${(cat.margin / (GOALS[cat.name] || 40)) * 100}%` }}></div>
@@ -347,47 +355,47 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* (6) COMPRAS: IMPACTO Y PROVEEDORES */}
+        {/* PESTAÑA 6: COMPRAS */}
         {activeTab === 6 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Total Compras del Periodo</p>
-              <p className="text-5xl font-black text-blue-500">{formatCurrency(engine.comprasTotal)}</p>
-              <p className="text-[9px] font-bold text-gray-600 mt-4 uppercase">Impacto sobre Ventas: {((engine.comprasTotal / (engine.vTotal || 1)) * 100).toFixed(1)}%</p>
+              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Total Compras Periodo</p>
+              <p className="text-5xl font-black text-blue-500">{formatCurrencyZero(engine.comprasTotal)}</p>
+              <p className="text-[9px] font-bold text-gray-600 mt-4 uppercase">Impacto sobre Ventas: {((engine.comprasTotal / (engine.vTotal || 1)) * 100).toFixed(0)}%</p>
             </div>
             <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest">Proveedores del Periodo</h3>
+              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest">Suministros Recientes</h3>
               {engine.cRange.slice(0, 5).map(c => (
                 <div key={c.id} className="flex justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl mb-2">
                   <span className="text-[10px] font-black uppercase">{c.proveedor || 'General'}</span>
-                  <span className="text-[10px] font-black">{formatCurrency(c.total_compra)}</span>
+                  <span className="text-[10px] font-black">{formatCurrencyZero(c.total_compra)}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* (7) ALERTAS: INTELIGENCIA PROACTIVA */}
+        {/* PESTAÑA 7: ALERTAS */}
         {activeTab === 7 && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {productos.filter(p => p.stock_actual <= 0).map(p => (
               <div key={p.sku} className="bg-red-600/10 border-2 border-red-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-red-500 uppercase mb-2">Producto Agotado</p>
+                <p className="text-[9px] font-black text-red-500 uppercase mb-2">AGOTADO</p>
                 <h4 className="text-xl font-black uppercase">{p.nombre}</h4>
               </div>
             ))}
             {engine.invData.filter(p => p.diasInv < 1 && p.stock_actual > 0).map(p => (
               <div key={p.sku} className="bg-amber-600/10 border-2 border-amber-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-amber-500 uppercase mb-2">Resurtido Crítico</p>
+                <p className="text-[9px] font-black text-amber-500 uppercase mb-2">RESURTIDO CRÍTICO</p>
                 <h4 className="text-xl font-black uppercase">{p.nombre}</h4>
-                <p className="text-[10px] font-bold text-white mt-2">Días rest: {p.diasInv.toFixed(1)}</p>
+                <p className="text-[10px] font-bold text-white mt-2">Días rest: {p.diasInv}</p>
               </div>
             ))}
             {engine.chartCategorias.filter(c => c.margin < (GOALS[c.name] || 0)).map(c => (
               <div key={c.name} className="bg-blue-600/10 border-2 border-blue-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-blue-500 uppercase mb-2">Bajo Margen en Categoría</p>
+                <p className="text-[9px] font-black text-blue-500 uppercase mb-2">BAJO MARGEN</p>
                 <h4 className="text-xl font-black uppercase">{c.name}</h4>
-                <p className="text-[10px] font-bold text-white mt-2">Margen: {c.margin.toFixed(1)}%</p>
+                <p className="text-[10px] font-bold text-white mt-2">Margen: {c.margin}%</p>
               </div>
             ))}
           </div>
