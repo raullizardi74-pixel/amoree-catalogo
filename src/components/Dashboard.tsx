@@ -138,13 +138,16 @@ export default function Dashboard() {
       vsAnterior: Math.round(vAnt > 0 ? ((vTotal - vAnt) / vAnt) * 100 : 0),
       chartCategorias, chartPagos, chartHoras: horasData, top5, invData,
       comprasTotal: Math.round(cRange.reduce((a, b) => a + (b.total_compra || 0), 0)),
-      cRange, mRange
+      cRange, mRange, pRange
     };
   }, [rango, fechaInicio, fechaFin, pedidos, productos, mermas, compras]);
 
-  // --- FUNCIÓN DE EXPORTACIÓN CSV PARA IA ---
+  // --- FUNCIÓN DE EXPORTACIÓN CSV REFORZADA ---
   const exportCSV = () => {
-    if (engine.pRange.length === 0) return alert("No hay datos para exportar");
+    if (!engine.pRange || engine.pRange.length === 0) {
+      alert("No hay pedidos en el periodo seleccionado para exportar.");
+      return;
+    }
 
     const headers = ["Fecha", "Categoria", "Producto", "Cantidad", "Unidad", "Venta_Total", "Metodo_Pago", "Margen_Real_%"];
     const rows: any[] = [];
@@ -168,17 +171,29 @@ export default function Dashboard() {
     });
 
     const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    // El carácter \uFEFF es el BOM (Byte Order Mark) para que Excel abra el CSV en UTF-8 directamente
+    const blob = new Blob(["\uFEFF", csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+    
+    // Crear el link de forma física temporalmente para asegurar la descarga en todos los navegadores
     const link = document.createElement("a");
     link.href = url;
     link.download = `AMOREE_IA_REPORT_${format(new Date(), 'ddMMyy')}.csv`;
+    
+    document.body.appendChild(link);
     link.click();
+    
+    // Limpieza
+    setTimeout(() => {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, 100);
   };
 
   const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7'];
 
-  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse">SINCRO TITANIUM...</div>;
+  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse uppercase tracking-[0.5em]">Sincronizando Titanium OS...</div>;
 
   return (
     <div className="bg-[#050505] min-h-screen p-4 md:p-10 text-white font-sans selection:bg-green-500/30">
@@ -199,10 +214,9 @@ export default function Dashboard() {
               <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black text-green-500 outline-none" />
             </div>
           )}
-          {/* BOTÓN EXPORTAR TITANIUM */}
           <button 
             onClick={exportCSV}
-            className="flex items-center gap-3 bg-white/5 border border-white/10 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 hover:text-white hover:border-green-500 transition-all group"
+            className="flex items-center gap-3 bg-white/5 border border-white/10 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 hover:text-white hover:border-green-500 transition-all group shadow-xl"
           >
             <span className="text-lg group-hover:scale-125 transition-transform">📥</span> Exportar para IA
           </button>
@@ -273,7 +287,7 @@ export default function Dashboard() {
                     {productos.filter(p => p.stock_actual <= 0).slice(0, 4).map(p => (
                       <div key={p.sku} className="flex justify-between items-center p-4 bg-red-600/5 border border-red-600/20 rounded-2xl">
                         <span className="text-xs font-bold text-red-500 uppercase">{p.nombre}</span>
-                        <span className="text-xs font-black text-white">AGOTADO</span>
+                        <span className="text-xs font-black text-white">SIN STOCK</span>
                       </div>
                     ))}
                   </div>
