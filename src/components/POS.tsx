@@ -12,7 +12,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
   const [clientes, setClientes] = useState<any[]>([]);
   const [clienteSeleccionado, setClienteSeleccionado] = useState<any>(null);
 
-  // Estados para Nuevo Cliente
+  // Estados para Registro de Cliente Nuevo
   const [showNewCliente, setShowNewCliente] = useState(false);
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [nuevoTelefono, setNuevoTelefono] = useState('');
@@ -27,9 +27,14 @@ export default function POS({ onBack }: { onBack: () => void }) {
     if (data) setProducts(data);
   };
 
+  // Función Maestra de Sincronización de Clientes
   const fetchClientes = async () => {
-    const { data } = await supabase.from('clientes').select('*').order('nombre');
+    const { data, error } = await supabase
+      .from('clientes')
+      .select('*')
+      .order('nombre');
     if (data) setClientes(data);
+    if (error) console.error("Error cargando clientes:", error);
   };
 
   const addToCart = (product: any) => {
@@ -44,42 +49,43 @@ export default function POS({ onBack }: { onBack: () => void }) {
     setCart(cart.map(item => item.sku === sku ? { ...item, quantity: finalWeight } : item));
   };
 
+  const totalVenta = cart.reduce((sum, item) => sum + (item.precio_venta * item.quantity), 0);
+
+  // MANEJO DE ALTA DE CLIENTE
   const handleCreateCliente = async () => {
     if (!nuevoNombre || !nuevoTelefono) {
-      alert("Por favor, ingresa nombre y teléfono.");
+      alert("⚠️ Falta información del cliente.");
       return;
     }
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('clientes')
-        .insert([{ nombre: nuevoNombre, telefono: nuevoTelefono }])
+        .insert([{ nombre: nuevoNombre, telefono: nuevoTelefono, deuda: 0 }])
         .select()
         .single();
 
       if (error) throw error;
       
-      setClientes([...clientes, data]);
+      // Sincronización inmediata
+      await fetchClientes();
       setClienteSeleccionado(data);
       setShowNewCliente(false);
       setNuevoNombre('');
       setNuevoTelefono('');
-      alert("✅ Cliente registrado y seleccionado");
     } catch (err: any) {
-      alert("Error al crear cliente: " + err.message);
+      alert("Error al registrar cliente: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const totalVenta = cart.reduce((sum, item) => sum + (item.precio_venta * item.quantity), 0);
-
+  // FINALIZACIÓN DE VENTA (EL CEREBRO DEL SISTEMA)
   const handleFinalize = async () => {
     if (cart.length === 0) return;
     
-    // VALIDACIÓN CRÍTICA PARA "A CUENTA"
     if (metodo === 'A Cuenta' && !clienteSeleccionado) {
-      alert("🚨 ERROR: Debes seleccionar un cliente para registrar una venta A CUENTA.");
+      alert("🚨 ATENCIÓN: Selecciona un cliente para registrar la deuda.");
       return;
     }
 
@@ -102,16 +108,20 @@ export default function POS({ onBack }: { onBack: () => void }) {
         }))
       };
 
+      // 1. Insertar Pedido
       const { error: errorPed } = await supabase.from('pedidos').insert([nuevoPedido]);
       if (errorPed) throw errorPed;
 
+      // 2. Si es crédito, actualizar la tabla clientes (RPC)
       if (esACuenta && clienteSeleccionado) {
-        await supabase.rpc('incrementar_deuda_cliente', { 
+        const { error: errorDeuda } = await supabase.rpc('incrementar_deuda_cliente', { 
           cliente_id: clienteSeleccionado.id, 
           monto: totalVenta 
         });
+        if (errorDeuda) throw errorDeuda;
       }
 
+      // 3. Sincronizar Stock Actual
       for (const item of cart) {
         const { data: prodData } = await supabase
           .from('productos')
@@ -127,11 +137,13 @@ export default function POS({ onBack }: { onBack: () => void }) {
           .eq('sku', item.sku);
       }
 
-      alert('🚀 Venta y Stock sincronizados con éxito');
+      // 4. ACTUALIZACIÓN POST-VENTA
+      await fetchClientes(); // <-- CRÍTICO: Refresca saldos para la siguiente venta
+      alert('✅ Transacción Completada');
       onBack();
 
     } catch (err: any) {
-      alert("Error: " + err.message);
+      alert("Error en sistema: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -139,7 +151,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-[#050505] z-50 flex flex-col md:flex-row font-sans text-white">
-      {/* SECCIÓN PRODUCTOS */}
+      {/* PANEL DE PRODUCTOS */}
       <div className="flex-1 flex flex-col border-r border-white/5 bg-[#080808]">
         <div className="p-6 bg-black/40 backdrop-blur-md border-b border-white/5 flex items-center gap-6">
           <button onClick={onBack} className="text-2xl p-3 hover:bg-white/10 rounded-2xl transition-all">🔙</button>
@@ -157,45 +169,37 @@ export default function POS({ onBack }: { onBack: () => void }) {
               key={p.sku} 
               onClick={() => addToCart(p)} 
               disabled={p.stock_actual <= 0}
-              className={`bg-white/5 p-6 rounded-[40px] border border-white/5 hover:border-green-500/50 hover:scale-[1.03] transition-all flex flex-col items-center text-center relative group ${p.stock_actual <= 0 ? 'opacity-40 grayscale' : ''}`}
+              className={`bg-white/5 p-6 rounded-[40px] border border-white/5 hover:border-green-500/50 hover:scale-[1.03] transition-all flex flex-col items-center text-center relative ${p.stock_actual <= 0 ? 'opacity-40 grayscale' : ''}`}
             >
               <img src={p.url_imagen} className="w-24 h-24 object-cover rounded-full mb-4 shadow-2xl" />
               <p className="text-[10px] font-black uppercase text-gray-500 leading-tight mb-2">{p.nombre}</p>
               <p className="text-lg font-black text-green-500">{formatCurrency(p.precio_venta)}</p>
-              
               {p.stock_actual <= 0 && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="bg-red-600 text-white text-[10px] font-black px-4 py-2 rounded-full rotate-[-15deg] shadow-2xl border-2 border-white">AGOTADO</span>
+                  <span className="bg-red-600 text-white text-[10px] font-black px-4 py-2 rounded-full rotate-[-15deg] border-2 border-white">AGOTADO</span>
                 </div>
-              )}
-              
-              {p.stock_actual > 0 && p.stock_actual < 5 && (
-                <span className="absolute top-4 right-4 bg-amber-500 text-black text-[7px] font-black px-2 py-1 rounded-full animate-pulse">SOLO {p.stock_actual}</span>
               )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* SECCIÓN CAJA (Ticket) */}
+      {/* PANEL DE COBRO (TICKET) */}
       <div className="w-full md:w-[450px] bg-black flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]">
-        <div className="p-10 bg-gradient-to-br from-gray-900 to-black rounded-bl-[4rem] border-b border-white/5">
+        <div className="p-10 bg-gradient-to-br from-gray-900 to-black border-b border-white/5">
           <h2 className="text-4xl font-black italic uppercase tracking-tighter">Caja <span className="text-green-500">Amoree</span></h2>
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 space-y-6">
           {cart.map(item => (
-            <div key={item.sku} className="bg-white/[0.03] p-6 rounded-[32px] border border-white/5 relative">
+            <div key={item.sku} className="bg-white/[0.03] p-6 rounded-[32px] border border-white/5">
               <p className="text-xs font-black uppercase text-gray-300 mb-4">{item.nombre}</p>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="number" step="0.05" value={item.quantity}
-                    onChange={(e) => updateWeight(item.sku, parseFloat(e.target.value))}
-                    className="w-24 p-3 bg-black border border-white/10 rounded-xl font-black text-center text-green-500"
-                  />
-                  <span className="text-[10px] font-black text-gray-600">Disp: {products.find(p=>p.sku===item.sku)?.stock_actual}</span>
-                </div>
+                <input 
+                  type="number" step="0.05" value={item.quantity}
+                  onChange={(e) => updateWeight(item.sku, parseFloat(e.target.value))}
+                  className="w-24 p-3 bg-black border border-white/10 rounded-xl font-black text-center text-green-500"
+                />
                 <p className="text-xl font-black text-white">{formatCurrency(item.precio_venta * item.quantity)}</p>
               </div>
             </div>
@@ -217,72 +221,75 @@ export default function POS({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* MODAL PAGO CORREGIDO */}
+      {/* MODAL DE PAGO RECONSTRUIDO */}
       {showPayment && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-6 z-[100]">
-          <div className="bg-[#0A0A0A] w-full max-w-xl rounded-[50px] p-10 border border-white/10 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-2xl font-black uppercase mb-8 text-center tracking-widest">Método de Pago</h3>
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-3xl flex items-center justify-center p-6 z-[100]">
+          <div className="bg-[#0A0A0A] w-full max-w-xl rounded-[60px] p-10 border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <h3 className="text-2xl font-black uppercase mb-8 text-center tracking-[0.2em] text-gray-400">Método de Pago</h3>
             
-            <div className="grid grid-cols-2 gap-3 mb-8">
+            <div className="grid grid-cols-2 gap-3 mb-10">
               {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(m => (
                 <button 
                   key={m} onClick={() => { setMetodo(m); if(m !== 'A Cuenta') setClienteSeleccionado(null); }}
-                  className={`py-5 rounded-[20px] font-black text-[9px] uppercase border-2 transition-all ${metodo === m ? 'bg-green-500 text-white border-green-500' : 'bg-white/5 text-gray-500 border-white/5'}`}
+                  className={`py-5 rounded-[25px] font-black text-[9px] uppercase border-2 transition-all ${metodo === m ? 'bg-green-500 text-white border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'bg-white/5 text-gray-600 border-white/5'}`}
                 >
                   {m}
                 </button>
               ))}
             </div>
 
-            {/* FLUJO "A CUENTA" */}
+            {/* SECCIÓN DINÁMICA DE CRÉDITO */}
             {metodo === 'A Cuenta' && (
-              <div className="mb-8 p-6 bg-white/5 rounded-[30px] border border-white/10 animate-in fade-in zoom-in duration-300">
+              <div className="mb-10 p-8 bg-white/5 rounded-[40px] border border-white/10 animate-in fade-in zoom-in duration-300">
                 {!showNewCliente ? (
                   <>
-                    <p className="text-[10px] font-black uppercase text-green-500 mb-4">Seleccionar Cliente Existente</p>
+                    <p className="text-[10px] font-black uppercase text-green-500 mb-5 tracking-widest">Cartera de Clientes</p>
                     <select 
-                      className="w-full p-4 bg-black border border-white/10 rounded-2xl font-black text-sm mb-4 outline-none focus:ring-2 focus:ring-green-500"
+                      className="w-full p-5 bg-black border border-white/10 rounded-2xl font-black text-sm mb-6 outline-none focus:ring-2 focus:ring-green-500 appearance-none text-white"
+                      value={clienteSeleccionado?.id || ""}
                       onChange={(e) => {
-                        const c = clientes.find(cli => cli.id === e.target.value);
-                        setClienteSeleccionado(c);
+                        const sel = clientes.find(c => c.id === e.target.value);
+                        setClienteSeleccionado(sel);
                       }}
-                      value={clienteSeleccionado?.id || ''}
                     >
-                      <option value="">-- ELIGE UN CLIENTE --</option>
+                      <option value="" disabled>-- SELECCIONAR CLIENTE --</option>
                       {clientes.map(c => (
-                        <option key={c.id} value={c.id}>{c.nombre} (Deuda: {formatCurrency(c.deuda || 0)})</option>
+                        <option key={c.id} value={c.id} className="bg-[#0A0A0A] text-white">
+                          {c.nombre} (Deuda: {formatCurrency(c.deuda || 0)})
+                        </option>
                       ))}
                     </select>
                     <button 
                       onClick={() => setShowNewCliente(true)}
-                      className="text-[9px] font-black text-gray-400 hover:text-white transition-colors uppercase tracking-widest"
+                      className="w-full py-4 border border-dashed border-white/20 rounded-2xl text-[10px] font-black text-gray-500 hover:text-white hover:border-white transition-all uppercase"
                     >
-                      + ¿Cliente Nuevo? Registrar aquí
+                      + Registrar Nuevo Cliente
                     </button>
                   </>
                 ) : (
                   <div className="space-y-4">
-                    <p className="text-[10px] font-black uppercase text-amber-500">Alta de Cliente Nuevo</p>
+                    <p className="text-[10px] font-black uppercase text-amber-500 tracking-widest">Nuevo Registro Express</p>
                     <input 
                       type="text" placeholder="NOMBRE COMPLETO" 
-                      className="w-full p-4 bg-black border border-white/10 rounded-2xl font-black text-xs"
+                      className="w-full p-5 bg-black border border-white/10 rounded-2xl font-black text-xs text-white"
                       value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)}
                     />
                     <input 
-                      type="text" placeholder="WHATSAPP / TELÉFONO" 
-                      className="w-full p-4 bg-black border border-white/10 rounded-2xl font-black text-xs"
+                      type="text" placeholder="WHATSAPP (10 DÍGITOS)" 
+                      className="w-full p-5 bg-black border border-white/10 rounded-2xl font-black text-xs text-white"
                       value={nuevoTelefono} onChange={e => setNuevoTelefono(e.target.value)}
                     />
                     <div className="flex gap-2">
-                      <button onClick={handleCreateCliente} className="flex-1 bg-white text-black py-4 rounded-xl font-black text-[9px] uppercase">Guardar y Seleccionar</button>
-                      <button onClick={() => setShowNewCliente(false)} className="bg-red-500/20 text-red-500 px-6 rounded-xl font-black text-[9px] uppercase">X</button>
+                      <button onClick={handleCreateCliente} className="flex-1 bg-white text-black py-4 rounded-xl font-black text-[9px] uppercase">Guardar y Elegir</button>
+                      <button onClick={() => setShowNewCliente(false)} className="px-6 bg-red-500/20 text-red-500 rounded-xl font-black text-[10px]">X</button>
                     </div>
                   </div>
                 )}
                 
                 {clienteSeleccionado && !showNewCliente && (
-                  <div className="mt-4 p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
-                    <p className="text-[10px] font-black text-green-500 uppercase">✅ Cliente: {clienteSeleccionado.nombre}</p>
+                  <div className="mt-6 p-4 bg-green-500/10 border border-green-500/20 rounded-2xl flex items-center justify-between">
+                    <span className="text-[10px] font-black text-green-500 uppercase tracking-tighter">Listo para: {clienteSeleccionado.nombre}</span>
+                    <button onClick={() => setClienteSeleccionado(null)} className="text-red-500 text-[8px] font-black">QUITAR</button>
                   </div>
                 )}
               </div>
@@ -291,16 +298,16 @@ export default function POS({ onBack }: { onBack: () => void }) {
             <button 
               disabled={loading || (metodo === 'A Cuenta' && !clienteSeleccionado)}
               onClick={handleFinalize} 
-              className="w-full bg-green-600 text-white py-6 rounded-[25px] font-black uppercase text-xs tracking-[0.3em] shadow-[0_20px_40px_rgba(22,163,74,0.3)] disabled:opacity-20"
+              className="w-full bg-green-600 text-white py-6 rounded-[30px] font-black uppercase text-xs tracking-[0.4em] shadow-[0_20px_50px_rgba(22,163,74,0.4)] disabled:opacity-20 transition-all active:scale-95"
             >
-              {loading ? 'REGISTRANDO...' : 'Confirmar Transacción'}
+              {loading ? 'SINCRONIZANDO...' : 'Sellar Venta'}
             </button>
             
             <button 
               onClick={() => { setShowPayment(false); setShowNewCliente(false); setClienteSeleccionado(null); }} 
-              className="w-full mt-6 text-[9px] font-black text-gray-600 uppercase tracking-widest hover:text-white transition-colors"
+              className="w-full mt-8 text-[9px] font-black text-gray-700 uppercase tracking-widest hover:text-white transition-all"
             >
-              Cancelar y volver
+              Cancelar Operación
             </button>
           </div>
         </div>
