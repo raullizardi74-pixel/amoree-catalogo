@@ -11,10 +11,7 @@ export default function AdminOrders() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients'>('orders');
   
-  // NAVEGACIÓN DE ADN
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
-  
-  // FILTROS
   const [filterMetodo, setFilterMetodo] = useState('Todos');
   const [filterTime, setFilterTime] = useState('Hoy');
   const [statusFilterWA, setStatusFilterWA] = useState('Todos');
@@ -31,21 +28,21 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  // --- LÓGICA DE WHATSAPP + REGISTRO DE SOCIO (RESPECTFUL MODE) ---
+  // --- 🚀 MOTOR DE MENSAJERÍA INTELIGENTE AMOREE ---
   const enviarTicketDigitalWA = async (order: any) => {
     let telefono = order.telefono_cliente?.match(/(\d{10})/)?.[1];
     let nombre = order.nombre_cliente || 'Cliente';
-    let esAnonimo = !order.nombre_cliente || order.nombre_cliente === 'Venta Local';
+    const metodo = order.metodo_pago || 'Efectivo';
 
-    if (esAnonimo && !telefono) {
-      const inputNombre = prompt("👤 Nombre (Opcional - Cancelar para mantener anónimo):");
-      
+    // Captura de datos para clientes anónimos
+    if ((!order.nombre_cliente || order.nombre_cliente === 'Venta Local') && !telefono) {
+      const inputNombre = prompt("👤 Nombre del Cliente (Opcional):");
       if (inputNombre === null) {
-        const soloTel = prompt("📱 Solo WhatsApp para enviar ticket (Opcional):");
+        const soloTel = prompt("📱 WhatsApp para enviar ticket (10 dígitos):");
         if (soloTel && soloTel.length === 10) telefono = soloTel;
         else return;
       } else {
-        const inputTel = prompt("📱 WhatsApp para registro de Socio (10 dígitos):");
+        const inputTel = prompt("📱 WhatsApp del Cliente (10 dígitos):");
         if (inputNombre && inputTel && inputTel.length === 10) {
           nombre = inputNombre.toUpperCase();
           telefono = inputTel;
@@ -63,12 +60,42 @@ export default function AdminOrders() {
       `• ${i.nombre}: ${i.quantity}${i.unidad || 'kg'} = *${formatCurrency(i.quantity * (i.precio_venta || i['$ VENTA']))}*`
     ).join('%0A');
 
-    const mensaje = `*AMOREE - Recibo Digital* 🥑%0A--------------------------%0A¡Hola *${nombre}*!%0A*Folio:* #${order.id}%0A*Fecha:* ${fecha}%0A--------------------------%0A${items}%0A--------------------------%0A*TOTAL: ${formatCurrency(order.total)}*%0A*Pago:* ${order.metodo_pago || 'Efectivo'}%0A--------------------------%0A¡Nos vemos pronto! 🚀`;
+    // Lógica de Mensajes por Tipo de Pago
+    let mensajeCierre = "";
+    switch (metodo) {
+      case 'Efectivo':
+        mensajeCierre = `✅ *Pago en Efectivo recibido.*%0A¡Gracias por tu compra directa en tienda!`;
+        break;
+      case 'Transferencia':
+        mensajeCierre = `🏦 *Pago por Transferencia confirmado.*%0AEl comprobante ha sido validado en nuestro sistema.`;
+        break;
+      case 'Terminal':
+        mensajeCierre = `💳 *Pago con Tarjeta aprobado.*%0ATransacción procesada exitosamente por terminal.`;
+        break;
+      case 'A Cuenta':
+        mensajeCierre = `📑 *Venta registrada A CUENTA.*%0ASe ha actualizado tu saldo en nuestra cartera de socios.`;
+        break;
+      default:
+        mensajeCierre = `¡Gracias por tu preferencia!`;
+    }
 
-    window.open(`https://wa.me/52${telefono}?text=${mensaje}`, '_blank');
+    const mensajeFull = 
+      `*AMOREE - Recibo Digital* 🥑%0A` +
+      `--------------------------%0A` +
+      `¡Hola *${nombre}*!%0A` +
+      `*Folio:* #${order.id}%0A` +
+      `*Fecha:* ${fecha}%0A` +
+      `--------------------------%0A` +
+      `${items}%0A` +
+      `--------------------------%0A` +
+      `*TOTAL: ${formatCurrency(order.total)}*%0A` +
+      `${mensajeCierre}%0A` +
+      `--------------------------%0A` +
+      `🚀 *Amoree Titanium OS* - Eco Ticket`;
+
+    window.open(`https://wa.me/52${telefono}?text=${mensajeFull}`, '_blank');
   };
 
-  // --- FILTRADO POR ADN ---
   const getFilteredOrders = () => {
     let filtered = [...orders];
     if (orderTab === 'whatsapp') {
@@ -131,16 +158,16 @@ export default function AdminOrders() {
     if (!error) fetchOrders();
   };
 
-  if (loading && view === 'orders') return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse uppercase tracking-[0.5em]">Titanium Radar...</div>;
+  if (loading && view === 'orders') return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse uppercase tracking-[0.5em]">Titanium OS Radar...</div>;
 
   return (
     <div className="min-h-screen bg-[#050505] text-white pb-32 font-sans">
       {/* NAVBAR */}
-      <div className="bg-black/90 p-6 border-b border-white/10 flex justify-between items-center sticky top-0 z-[100] backdrop-blur-xl">
+      <div className="bg-black/90 p-6 border-b border-white/5 flex justify-between items-center sticky top-0 z-[100] backdrop-blur-xl">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
         <div className="flex bg-white/5 p-1 rounded-2xl gap-1 border border-white/5">
           {[{ id: 'orders', label: 'Pedidos' }, { id: 'pos', label: 'Terminal' }, { id: 'clients', label: 'Cartera' }, { id: 'stats', label: 'Métricas' }].map(v => (
-            <button key={v.id} onClick={() => setView(v.id as any)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${view === v.id ? 'bg-white text-black' : 'text-gray-500'}`}>{v.label}</button>
+            <button key={v.id} onClick={() => setView(v.id as any)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${view === v.id ? 'bg-white text-black shadow-xl' : 'text-gray-500 hover:text-white'}`}>{v.label}</button>
           ))}
         </div>
       </div>
@@ -148,14 +175,15 @@ export default function AdminOrders() {
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {view === 'orders' ? (
           <>
+            {/* ADN TABS */}
             <div className="flex flex-col xl:flex-row justify-between items-center gap-6 mb-10">
-              <div className="flex bg-[#0A0A0A] p-2 rounded-[30px] border border-white/5 gap-2">
-                <button onClick={() => setOrderTab('whatsapp')} className={`px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'whatsapp' ? 'bg-green-600 text-white shadow-lg' : 'text-gray-50'}`}>🛵 WhatsApp</button>
-                <button onClick={() => setOrderTab('terminal')} className={`px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'terminal' ? 'bg-white text-black' : 'text-gray-500'}`}>🏪 Terminal</button>
-                <button onClick={() => setOrderTab('pagos')} className={`px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'pagos' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>🏦 Pagos</button>
+              <div className="flex bg-[#0A0A0A] p-2 rounded-[30px] border border-white/5 gap-2 w-full md:w-auto">
+                <button onClick={() => setOrderTab('whatsapp')} className={`flex-1 md:flex-none px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'whatsapp' ? 'bg-green-600 text-white shadow-lg' : 'text-gray-500'}`}>🛵 WhatsApp</button>
+                <button onClick={() => setOrderTab('terminal')} className={`flex-1 md:flex-none px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'terminal' ? 'bg-white text-black' : 'text-gray-500'}`}>🏪 Terminal</button>
+                <button onClick={() => setOrderTab('pagos')} className={`flex-1 md:flex-none px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'pagos' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>🏦 Pagos</button>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
                 {orderTab === 'terminal' && (
                   <select value={filterTime} onChange={(e) => setFilterTime(e.target.value)} className="bg-white/5 border border-white/10 px-4 py-3 rounded-xl text-[9px] font-black uppercase text-green-500">
                     <option value="Hoy" className="bg-black">Hoy</option>
@@ -167,7 +195,7 @@ export default function AdminOrders() {
               </div>
             </div>
 
-            {/* TABLA ACORDEÓN TERMINAL */}
+            {/* VISTA TERMINAL (ACORDEÓN CON TICKET DIGITAL) */}
             {orderTab === 'terminal' && (
               <div className="bg-[#0A0A0A] rounded-[40px] border border-white/5 overflow-hidden shadow-2xl">
                 <div className="grid grid-cols-6 p-6 border-b border-white/10 text-[9px] font-black text-gray-600 uppercase text-center">
@@ -180,7 +208,7 @@ export default function AdminOrders() {
                         <span className="text-[10px] font-black text-gray-600">#{order.id}</span>
                         <span className="text-[10px] font-black text-gray-400">{format(new Date(order.created_at), 'HH:mm')}</span>
                         <span className="text-[11px] font-black text-white text-left truncate uppercase italic">{order.nombre_cliente || 'Venta Local'}</span>
-                        <span className="text-[9px] font-black text-green-500">{order.metodo_pago || 'Efectivo'}</span>
+                        <span className="text-[9px] font-black text-green-500 uppercase">{order.metodo_pago || 'Efectivo'}</span>
                         <span className="text-lg font-black text-white">{formatCurrency(order.total)}</span>
                         <span className="text-xs">{expandedOrderId === order.id ? '🔼' : '🔽'}</span>
                       </div>
@@ -195,8 +223,8 @@ export default function AdminOrders() {
                                 </div>
                               ))}
                             </div>
-                            <button onClick={() => enviarTicketDigitalWA(order)} className="bg-green-600 text-white p-6 rounded-[28px] font-black text-[10px] uppercase tracking-widest shadow-xl flex flex-col items-center gap-2">
-                              <span className="text-2xl">📱</span> Ticket Digital
+                            <button onClick={() => enviarTicketDigitalWA(order)} className="bg-green-600 text-white p-6 rounded-[28px] font-black text-[10px] uppercase tracking-widest shadow-xl flex flex-col items-center gap-2 transition-transform active:scale-95">
+                              <span className="text-2xl">📱</span> Enviar Ticket WA
                             </button>
                           </div>
                         </div>
@@ -207,7 +235,7 @@ export default function AdminOrders() {
               </div>
             )}
 
-            {/* WHATSAPP Y PAGOS (Misma lógica visual) */}
+            {/* WHATSAPP Y PAGOS (Misma lógica pero con botón de ticket habilitado) */}
             {orderTab === 'whatsapp' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {getFilteredOrders().map(order => (
@@ -217,7 +245,7 @@ export default function AdminOrders() {
                         <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente || 'Invitado WA'}</h3>
                         <p className="text-[9px] font-black text-gray-500 uppercase">{order.telefono_cliente}</p>
                       </div>
-                      <span className="px-4 py-1.5 rounded-full text-[8px] font-black bg-white/5 border border-white/10">{order.estado}</span>
+                      <button onClick={() => enviarTicketDigitalWA(order)} className="bg-white/5 p-3 rounded-2xl hover:bg-green-500/20 transition-all border border-white/10">📱</button>
                     </div>
                     <div className="space-y-3 mb-10">
                       {order.detalle_pedido?.map((item: any) => (
@@ -240,7 +268,10 @@ export default function AdminOrders() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {getFilteredOrders().map(order => (
                   <div key={order.id} className="bg-[#0A0A0A] border border-blue-500/20 rounded-[40px] p-8 shadow-2xl relative">
-                    <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest mb-4">Registro Contable</p>
+                    <div className="flex justify-between items-start">
+                      <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest mb-4">Registro Contable</p>
+                      <button onClick={() => enviarTicketDigitalWA(order)} className="text-lg">📱</button>
+                    </div>
                     <h3 className="text-xl font-black uppercase italic mb-2 leading-none">{order.telefono_cliente?.split(':')[0]}</h3>
                     <p className="text-4xl font-black text-white">{formatCurrency(order.total)}</p>
                   </div>
