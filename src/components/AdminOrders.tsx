@@ -11,7 +11,10 @@ export default function AdminOrders() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients'>('orders');
   
+  // NAVEGACIÓN DE ADN
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
+  
+  // FILTROS
   const [filterMetodo, setFilterMetodo] = useState('Todos');
   const [filterTime, setFilterTime] = useState('Hoy');
   const [statusFilterWA, setStatusFilterWA] = useState('Todos');
@@ -28,15 +31,18 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchOrders(); }, []);
 
-  // --- 🚀 MOTOR DE MENSAJERÍA INTELIGENTE AMOREE ---
+  // --- 🚀 MOTOR DE TICKET DIGITAL INTELIGENTE ---
   const enviarTicketDigitalWA = async (order: any) => {
+    // 1. Intentamos obtener datos existentes
     let telefono = order.telefono_cliente?.match(/(\d{10})/)?.[1];
     let nombre = order.nombre_cliente || 'Cliente';
     const metodo = order.metodo_pago || 'Efectivo';
 
-    // Captura de datos para clientes anónimos
+    // 2. Solo preguntamos datos si es Venta Local/Anónima y no tiene teléfono
     if ((!order.nombre_cliente || order.nombre_cliente === 'Venta Local') && !telefono) {
       const inputNombre = prompt("👤 Nombre del Cliente (Opcional):");
+      
+      // Si cancela el nombre, respetamos y preguntamos solo el número
       if (inputNombre === null) {
         const soloTel = prompt("📱 WhatsApp para enviar ticket (10 dígitos):");
         if (soloTel && soloTel.length === 10) telefono = soloTel;
@@ -46,56 +52,61 @@ export default function AdminOrders() {
         if (inputNombre && inputTel && inputTel.length === 10) {
           nombre = inputNombre.toUpperCase();
           telefono = inputTel;
+          // Guardamos en DB para que ya no sea anónimo
           try {
             await supabase.from('clientes').insert([{ nombre, telefono, saldo_deudor: 0 }]);
             await supabase.from('pedidos').update({ nombre_cliente: nombre, telefono_cliente: telefono }).eq('id', order.id);
             fetchOrders();
           } catch (e) { console.error("Error al registrar socio", e); }
+        } else {
+          return;
         }
       }
     }
 
+    // 3. Preparación de datos del ticket
     const fecha = format(new Date(order.created_at), 'dd/MM/yyyy HH:mm');
     const items = order.detalle_pedido?.map((i: any) => 
       `• ${i.nombre}: ${i.quantity}${i.unidad || 'kg'} = *${formatCurrency(i.quantity * (i.precio_venta || i['$ VENTA']))}*`
-    ).join('%0A');
+    ).join('\n');
 
-    // Lógica de Mensajes por Tipo de Pago
+    // 4. Mensaje personalizado según Método de Pago
     let mensajeCierre = "";
     switch (metodo) {
       case 'Efectivo':
-        mensajeCierre = `✅ *Pago en Efectivo recibido.*%0A¡Gracias por tu compra directa en tienda!`;
+        mensajeCierre = `✅ *Pago en Efectivo recibido.* \n¡Gracias por tu compra directa en tienda!`;
         break;
       case 'Transferencia':
-        mensajeCierre = `🏦 *Pago por Transferencia confirmado.*%0AEl comprobante ha sido validado en nuestro sistema.`;
+        mensajeCierre = `🏦 *Pago por Transferencia confirmado.* \nEl comprobante ha sido validado en sistema.`;
         break;
       case 'Terminal':
-        mensajeCierre = `💳 *Pago con Tarjeta aprobado.*%0ATransacción procesada exitosamente por terminal.`;
+        mensajeCierre = `💳 *Pago con Tarjeta aprobado.* \nTransacción procesada exitosamente.`;
         break;
       case 'A Cuenta':
-        mensajeCierre = `📑 *Venta registrada A CUENTA.*%0ASe ha actualizado tu saldo en nuestra cartera de socios.`;
+        mensajeCierre = `📑 *Venta registrada A CUENTA.* \nTu saldo ha sido actualizado en cartera.`;
         break;
       default:
         mensajeCierre = `¡Gracias por tu preferencia!`;
     }
 
-    const mensajeFull = 
-      `*AMOREE - Recibo Digital* 🥑%0A` +
-      `--------------------------%0A` +
-      `¡Hola *${nombre}*!%0A` +
-      `*Folio:* #${order.id}%0A` +
-      `*Fecha:* ${fecha}%0A` +
-      `--------------------------%0A` +
-      `${items}%0A` +
-      `--------------------------%0A` +
-      `*TOTAL: ${formatCurrency(order.total)}*%0A` +
-      `${mensajeCierre}%0A` +
-      `--------------------------%0A` +
-      `🚀 *Amoree Titanium OS* - Eco Ticket`;
+    // 5. Construcción Final con encodeURIComponent para evitar cortes
+    const mensajeFull = `*AMOREE - Recibo Digital* 🥑\n` +
+                        `--------------------------\n` +
+                        `¡Hola *${nombre}*!\n` +
+                        `*Folio:* #${order.id}\n` +
+                        `*Fecha:* ${fecha}\n` +
+                        `--------------------------\n` +
+                        `${items}\n` +
+                        `--------------------------\n` +
+                        `*TOTAL: ${formatCurrency(order.total)}*\n\n` +
+                        `${mensajeCierre}\n` +
+                        `--------------------------\n` +
+                        `🚀 *Amoree Titanium OS* - Eco Ticket`;
 
-    window.open(`https://wa.me/52${telefono}?text=${mensajeFull}`, '_blank');
+    window.open(`https://wa.me/52${telefono}?text=${encodeURIComponent(mensajeFull)}`, '_blank');
   };
 
+  // --- LÓGICA DE FILTRADO ---
   const getFilteredOrders = () => {
     let filtered = [...orders];
     if (orderTab === 'whatsapp') {
@@ -116,6 +127,7 @@ export default function AdminOrders() {
     return filtered;
   };
 
+  // --- FUNCIONES DE SURTIDO Y ESTADO ---
   const updateItemQuantity = (orderId: number, itemSku: string, newQty: number) => {
     setOrders(prev => prev.map(order => {
       if (order.id === orderId) {
@@ -142,10 +154,10 @@ export default function AdminOrders() {
     if (!error) {
       const telMatch = orderToUpdate.telefono_cliente.match(/(\d{10})/);
       if (telMatch) {
-        const msg = `*AMOREE - Confirmación de Pesos* 🥑%0A%0A` +
-                    orderToUpdate.detalle_pedido.map((i:any) => `- ${i.nombre}: ${i.quantity}${i.unidad || 'kg'} = *${formatCurrency(i.quantity * (i.precio_venta || i['$ VENTA']))}*`).join('%0A') +
-                    `%0A%0A*TOTAL: ${formatCurrency(orderToUpdate.total)}*%0A%0AFavor de enviar comprobante. 🚀`;
-        window.open(`https://wa.me/52${telMatch[1]}?text=${msg}`, '_blank');
+        const msg = `*AMOREE - Confirmación de Pesos* 🥑\n\n¡Hola! Ya pesamos tu pedido con el peso real:\n` +
+                    orderToUpdate.detalle_pedido.map((i:any) => `- ${i.nombre}: ${i.quantity}${i.unidad || 'kg'} = *${formatCurrency(i.quantity * (i.precio_venta || i['$ VENTA']))}*`).join('\n') +
+                    `\n\n*TOTAL FINAL: ${formatCurrency(orderToUpdate.total)}*\n\nFavor de enviar comprobante. 🚀`;
+        window.open(`https://wa.me/52${telMatch[1]}?text=${encodeURIComponent(msg)}`, '_blank');
       }
       fetchOrders();
     }
@@ -162,12 +174,12 @@ export default function AdminOrders() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white pb-32 font-sans">
-      {/* NAVBAR */}
+      {/* HEADER PRINCIPAL */}
       <div className="bg-black/90 p-6 border-b border-white/5 flex justify-between items-center sticky top-0 z-[100] backdrop-blur-xl">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
         <div className="flex bg-white/5 p-1 rounded-2xl gap-1 border border-white/5">
           {[{ id: 'orders', label: 'Pedidos' }, { id: 'pos', label: 'Terminal' }, { id: 'clients', label: 'Cartera' }, { id: 'stats', label: 'Métricas' }].map(v => (
-            <button key={v.id} onClick={() => setView(v.id as any)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${view === v.id ? 'bg-white text-black shadow-xl' : 'text-gray-500 hover:text-white'}`}>{v.label}</button>
+            <button key={v.id} onClick={() => setView(v.id as any)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${view === v.id ? 'bg-white text-black shadow-xl' : 'text-gray-500'}`}>{v.label}</button>
           ))}
         </div>
       </div>
@@ -175,7 +187,7 @@ export default function AdminOrders() {
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {view === 'orders' ? (
           <>
-            {/* ADN TABS */}
+            {/* SUB-TABS ADN */}
             <div className="flex flex-col xl:flex-row justify-between items-center gap-6 mb-10">
               <div className="flex bg-[#0A0A0A] p-2 rounded-[30px] border border-white/5 gap-2 w-full md:w-auto">
                 <button onClick={() => setOrderTab('whatsapp')} className={`flex-1 md:flex-none px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all ${orderTab === 'whatsapp' ? 'bg-green-600 text-white shadow-lg' : 'text-gray-500'}`}>🛵 WhatsApp</button>
@@ -185,7 +197,7 @@ export default function AdminOrders() {
 
               <div className="flex flex-wrap justify-center gap-3">
                 {orderTab === 'terminal' && (
-                  <select value={filterTime} onChange={(e) => setFilterTime(e.target.value)} className="bg-white/5 border border-white/10 px-4 py-3 rounded-xl text-[9px] font-black uppercase text-green-500">
+                  <select value={filterTime} onChange={(e) => setFilterTime(e.target.value)} className="bg-white/5 border border-white/10 px-4 py-3 rounded-xl text-[9px] font-black uppercase text-green-500 outline-none">
                     <option value="Hoy" className="bg-black">Hoy</option>
                     <option value="Ayer" className="bg-black">Ayer</option>
                     <option value="7d" className="bg-black">7d</option>
@@ -195,7 +207,43 @@ export default function AdminOrders() {
               </div>
             </div>
 
-            {/* VISTA TERMINAL (ACORDEÓN CON TICKET DIGITAL) */}
+            {/* VISTA WHATSAPP (TARJETAS) */}
+            {orderTab === 'whatsapp' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {getFilteredOrders().map(order => (
+                  <div key={order.id} className="bg-[#0A0A0A] border border-white/5 rounded-[50px] p-10 shadow-2xl relative">
+                    <div className="flex justify-between items-start mb-8">
+                      <div>
+                        <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente || 'Invitado WA'}</h3>
+                        <p className="text-[9px] font-black text-gray-500 uppercase">{order.telefono_cliente}</p>
+                      </div>
+                      <button onClick={() => enviarTicketDigitalWA(order)} className="bg-white/5 p-3 rounded-2xl hover:bg-green-500/20 border border-white/10 transition-all">📱</button>
+                    </div>
+                    <div className="space-y-3 mb-10">
+                      {order.detalle_pedido?.map((item: any) => (
+                        <div key={item.sku} className="flex justify-between items-center bg-white/[0.02] p-4 rounded-2xl border border-white/5">
+                          <span className="text-[10px] font-black text-gray-400 uppercase">{item.nombre}</span>
+                          {order.estado === 'Pendiente' ? (
+                            <input type="number" step="0.05" value={item.quantity} onChange={(e) => updateItemQuantity(order.id, item.sku, parseFloat(e.target.value))} className="w-20 bg-black border border-green-500/30 text-center rounded-xl py-2 text-xs font-black text-green-500" />
+                          ) : (
+                            <span className="text-[10px] font-black">{item.quantity}{item.unidad || 'kg'}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between items-end pt-8 border-t border-white/5">
+                      <p className="text-4xl font-black">{formatCurrency(order.total)}</p>
+                      <div className="flex flex-col gap-2">
+                        {order.estado === 'Pendiente' && <button onClick={() => handleConfirmWeights(order.id)} className="bg-green-600 text-white py-3 px-6 rounded-xl text-[9px] font-black uppercase">⚖️ Confirmar</button>}
+                        <button onClick={() => updateStatus(order.id, 'Finalizado', order)} className="bg-white text-black py-3 px-6 rounded-xl text-[9px] font-black uppercase">📦 Entregado</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* VISTA TERMINAL (ACORDEÓN COMPACTO) */}
             {orderTab === 'terminal' && (
               <div className="bg-[#0A0A0A] rounded-[40px] border border-white/5 overflow-hidden shadow-2xl">
                 <div className="grid grid-cols-6 p-6 border-b border-white/10 text-[9px] font-black text-gray-600 uppercase text-center">
@@ -223,7 +271,7 @@ export default function AdminOrders() {
                                 </div>
                               ))}
                             </div>
-                            <button onClick={() => enviarTicketDigitalWA(order)} className="bg-green-600 text-white p-6 rounded-[28px] font-black text-[10px] uppercase tracking-widest shadow-xl flex flex-col items-center gap-2 transition-transform active:scale-95">
+                            <button onClick={() => enviarTicketDigitalWA(order)} className="bg-green-600 text-white p-6 rounded-[28px] font-black text-[10px] uppercase tracking-widest shadow-xl flex flex-col items-center gap-2 active:scale-95 transition-transform">
                               <span className="text-2xl">📱</span> Enviar Ticket WA
                             </button>
                           </div>
@@ -235,35 +283,7 @@ export default function AdminOrders() {
               </div>
             )}
 
-            {/* WHATSAPP Y PAGOS (Misma lógica pero con botón de ticket habilitado) */}
-            {orderTab === 'whatsapp' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {getFilteredOrders().map(order => (
-                  <div key={order.id} className="bg-[#0A0A0A] border border-white/5 rounded-[50px] p-10 shadow-2xl relative">
-                    <div className="flex justify-between items-start mb-8">
-                      <div>
-                        <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente || 'Invitado WA'}</h3>
-                        <p className="text-[9px] font-black text-gray-500 uppercase">{order.telefono_cliente}</p>
-                      </div>
-                      <button onClick={() => enviarTicketDigitalWA(order)} className="bg-white/5 p-3 rounded-2xl hover:bg-green-500/20 transition-all border border-white/10">📱</button>
-                    </div>
-                    <div className="space-y-3 mb-10">
-                      {order.detalle_pedido?.map((item: any) => (
-                        <div key={item.sku} className="flex justify-between items-center bg-white/[0.02] p-4 rounded-2xl border border-white/5">
-                          <span className="text-[10px] font-black text-gray-400 uppercase">{item.nombre}</span>
-                          <span className="text-[10px] font-black">{item.quantity}{item.unidad || 'kg'}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-end pt-8 border-t border-white/5">
-                      <p className="text-4xl font-black">{formatCurrency(order.total)}</p>
-                      <button onClick={() => updateStatus(order.id, 'Finalizado', order)} className="bg-green-600 text-white py-4 px-8 rounded-2xl text-[9px] font-black uppercase">📦 Entregado</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
+            {/* VISTA PAGOS */}
             {orderTab === 'pagos' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {getFilteredOrders().map(order => (
@@ -274,6 +294,7 @@ export default function AdminOrders() {
                     </div>
                     <h3 className="text-xl font-black uppercase italic mb-2 leading-none">{order.telefono_cliente?.split(':')[0]}</h3>
                     <p className="text-4xl font-black text-white">{formatCurrency(order.total)}</p>
+                    <p className="text-[8px] font-bold text-gray-600 mt-4 uppercase">{format(new Date(order.created_at), 'dd MMM yyyy - HH:mm')}</p>
                   </div>
                 ))}
               </div>
