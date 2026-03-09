@@ -4,12 +4,13 @@ import { formatCurrency } from '../lib/utils';
 import Dashboard from './Dashboard';
 import POS from './POS';
 import ClientsModule from './ClientsModule';
+import RutaDeCompra from './RutaDeCompra'; // 🚀 IMPORTADO
 import { format, isToday, isYesterday, subDays, isAfter } from 'date-fns';
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients'>('orders');
+  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta'>('orders');
   
   // NAVEGACIÓN DE ADN
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
@@ -177,9 +178,28 @@ export default function AdminOrders() {
       {/* HEADER PRINCIPAL */}
       <div className="bg-black/90 p-6 border-b border-white/5 flex justify-between items-center sticky top-0 z-[100] backdrop-blur-xl">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
-        <div className="flex bg-white/5 p-1 rounded-2xl gap-1 border border-white/5">
-          {[{ id: 'orders', label: 'Pedidos' }, { id: 'pos', label: 'Terminal' }, { id: 'clients', label: 'Cartera' }, { id: 'stats', label: 'Métricas' }].map(v => (
-            <button key={v.id} onClick={() => setView(v.id as any)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${view === v.id ? 'bg-white text-black shadow-xl' : 'text-gray-500'}`}>{v.label}</button>
+        
+        <div className="flex bg-white/5 p-1 rounded-2xl gap-1 border border-white/5 overflow-x-auto no-scrollbar">
+          {[
+            { id: 'orders', label: 'Pedidos' }, 
+            { id: 'ruta', label: 'Ruta Abasto 🛒' }, // 🚀 BOTÓN TITANIUM
+            { id: 'pos', label: 'Terminal' }, 
+            { id: 'clients', label: 'Cartera' }, 
+            { id: 'stats', label: 'Métricas' }
+          ].map(v => (
+            <button 
+              key={v.id} 
+              onClick={() => setView(v.id as any)} 
+              className={`px-4 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all whitespace-nowrap ${
+                view === v.id 
+                  ? 'bg-white text-black shadow-xl' 
+                  : v.id === 'ruta' 
+                    ? 'text-green-400 border border-green-500/50 shadow-[0_0_10px_rgba(34,197,94,0.2)]' // 🟢 BORDE NEÓN
+                    : 'text-gray-500'
+              }`}
+            >
+              {v.label}
+            </button>
           ))}
         </div>
       </div>
@@ -300,7 +320,15 @@ export default function AdminOrders() {
               </div>
             )}
           </>
-        ) : view === 'pos' ? <POS onBack={() => setView('orders')} /> : view === 'stats' ? <Dashboard /> : <ClientsModule />}
+        ) : view === 'ruta' ? (
+          <RutaDeCompra onBack={() => setView('orders')} />
+        ) : view === 'pos' ? (
+          <POS onBack={() => setView('orders')} /> 
+        ) : view === 'stats' ? (
+          <Dashboard /> 
+        ) : (
+          <ClientsModule />
+        )}
       </div>
     </div>
   );
