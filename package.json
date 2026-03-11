@@ -30,6 +30,8 @@
     "recharts": "^2.15.0",
     "remark-gfm": "^4.0.1",
     "vite": "^6.2.0"
+      "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
