@@ -29,9 +29,9 @@
     "react-markdown": "^10.1.0",
     "recharts": "^2.15.0",
     "remark-gfm": "^4.0.1",
-    "vite": "^6.2.0"
-      "jspdf": "^4.2.0",
-    "jspdf-autotable": "^5.0.7",
+    "vite": "^6.2.0",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
