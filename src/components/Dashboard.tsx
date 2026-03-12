@@ -3,69 +3,68 @@ import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, AreaChart, Area, Cell, PieChart, Pie, Legend
+  PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
 import { 
-  startOfDay, endOfDay, subDays, isWithinInterval, isSameDay, 
-  startOfWeek, endOfWeek, startOfMonth, endOfMonth, 
-  subWeeks, subMonths, format, parseISO, getHours, differenceInDays
+  startOfDay, endOfDay, subDays, isWithinInterval, format, parseISO, differenceInDays
 } from 'date-fns';
-import { es } from 'date-fns/locale/es';
+import { 
+  TrendingDown, TrendingUp, Minus, ChevronDown, ChevronUp, 
+  Zap, Brain, Target, Package, ShoppingCart, AlertCircle, Save
+} from 'lucide-react';
 
-// Función auxiliar para forzar 0 decimales en moneda
 const formatCurrencyZero = (value: number) => {
   return new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    style: 'currency', currency: 'MXN',
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(Math.round(value));
 };
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState(1);
   const [loading, setLoading] = useState(true);
-  
-  // --- ESTADOS DE FILTRO MAESTRO ---
-  const [rango, setRango] = useState<'hoy' | '7d' | '30d' | 'custom'>('7d');
-  const [fechaInicio, setFechaInicio] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
+  const [rango, setRango] = useState<'hoy' | '7d' | '30d' | 'custom'>('hoy');
+  const [fechaInicio, setFechaInicio] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(new Date(), 'yyyy-MM-dd'));
-
-  // --- REPOSITORIO DE DATOS ---
+  
+  // Estados de Datos
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
   const [mermas, setMermas] = useState<any[]>([]);
   const [compras, setCompras] = useState<any[]>([]);
+  const [expandedCompraCat, setExpandedCompraCat] = useState<string | null>(null);
 
-  // Registro de Merma
-  const [skuMerma, setSkuMerma] = useState('');
-  const [cantMerma, setCantMerma] = useState('');
-  const [motivoMerma, setMotivoMerma] = useState('Merma Natural');
+  // Portal de IA (Persistencia en LocalStorage para no perder notas al refrescar)
+  const [notasIA, setNotasIA] = useState(() => localStorage.getItem('amoree_ia_notes') || '');
 
-  // Metas Fijas por Categoría
   const GOALS: any = { 'Verduras': 35, 'Frutas': 35, 'Cremería': 25, 'Abarrotes': 15 };
+  const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7'];
 
   useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
-      try {
-        const [pRes, prRes, mRes, cRes] = await Promise.all([
-          supabase.from('pedidos').select('*').in('estado', ['Finalizado', 'Pagado', 'Pagado - Por Entregar']),
-          supabase.from('productos').select('*').order('nombre'),
-          supabase.from('merma').select('*').order('created_at', { ascending: false }),
-          supabase.from('compras').select('*').order('created_at', { ascending: false })
-        ]);
-        if (pRes.data) setPedidos(pRes.data);
-        if (prRes.data) setProductos(prRes.data);
-        if (mRes.data) setMermas(mRes.data);
-        if (cRes.data) setCompras(cRes.data);
-      } catch (e) { console.error(e); }
-      finally { setLoading(false); }
-    }
     fetchData();
   }, []);
 
-  // --- MASTER DATA ENGINE ---
+  useEffect(() => {
+    localStorage.setItem('amoree_ia_notes', notasIA);
+  }, [notasIA]);
+
+  async function fetchData() {
+    setLoading(true);
+    try {
+      const [pRes, prRes, mRes, cRes] = await Promise.all([
+        supabase.from('pedidos').select('*').in('estado', ['Finalizado', 'Pagado', 'Pagado - Por Entregar']),
+        supabase.from('productos').select('*').order('nombre'),
+        supabase.from('merma').select('*').order('created_at', { ascending: false }),
+        supabase.from('compras').select('*').order('created_at', { ascending: false })
+      ]);
+      if (pRes.data) setPedidos(pRes.data);
+      if (prRes.data) setProductos(prRes.data);
+      if (mRes.data) setMermas(mRes.data);
+      if (cRes.data) setCompras(cRes.data);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
+
   const engine = useMemo(() => {
     const ahora = new Date();
     let inicio: Date, fin: Date;
@@ -76,330 +75,188 @@ export default function Dashboard() {
     else { inicio = startOfDay(parseISO(fechaInicio)); fin = endOfDay(parseISO(fechaFin)); }
 
     const pRange = pedidos.filter(p => isWithinInterval(new Date(p.created_at), { start: inicio, end: fin }));
-    const mRange = mermas.filter(m => isWithinInterval(new Date(m.created_at), { start: inicio, end: fin }));
     const cRange = compras.filter(c => isWithinInterval(new Date(c.created_at), { start: inicio, end: fin }));
+    const mRange = mermas.filter(m => isWithinInterval(new Date(m.created_at), { start: inicio, end: fin }));
 
-    const vTotal = Math.round(pRange.reduce((a, b) => a + b.total, 0));
-    const mTotal = Math.round(mRange.reduce((a, b) => a + (b.total_perdida || 0), 0));
+    const vTotal = pRange.reduce((a, b) => a + b.total, 0);
+    const comprasTotal = cRange.reduce((a, b) => a + (b.total_compra || 0), 0);
 
-    // Análisis por Categoría
-    const catAnalysis: any = {};
-    pRange.forEach(p => p.detalle_pedido?.forEach((i: any) => {
-      const c = i.categoria || 'Otros';
-      if (!catAnalysis[c]) catAnalysis[c] = { venta: 0, costo: 0 };
-      catAnalysis[c].venta += i.quantity * (i.precio_venta || i['$ VENTA'] || 0);
-      catAnalysis[c].costo += i.quantity * (i.costo || 0);
-    }));
-
-    const chartCategorias = Object.entries(catAnalysis).map(([name, data]: any) => ({
-      name,
-      value: Math.round(data.venta),
-      margin: data.venta > 0 ? Math.round(((data.venta - data.costo) / data.venta) * 100) : 0
-    }));
-
-    // Métodos de Pago
-    const pagoData: any = {};
-    pRange.forEach(p => {
-      const m = p.metodo_pago || 'Efectivo';
-      pagoData[m] = (pagoData[m] || 0) + p.total;
-    });
-    const chartPagos = Object.entries(pagoData).map(([name, value]) => ({ name, value: Math.round(value as number) }));
-
-    // Ventas por Horario
-    const horasData = Array.from({ length: 13 }, (_, i) => ({ hora: `${i + 8}:00`, total: 0 }));
-    pRange.forEach(p => {
-      const h = getHours(new Date(p.created_at));
-      if (h >= 8 && h <= 20) horasData[h - 8].total += p.total;
+    // --- ANÁLISIS DE COMPRAS TITANIUM (Comparativa de Costos) ---
+    const comprasDetalle = cRange.map(compra => {
+      const historial = compras.filter(c => c.producto_sku === compra.producto_sku && new Date(c.created_at) < new Date(compra.created_at)).slice(0, 6);
+      const precioAnterior = historial[0]?.costo_unitario || compra.costo_unitario;
+      const promedio6 = historial.length > 0 ? historial.reduce((acc, curr) => acc + curr.costo_unitario, 0) / historial.length : compra.costo_unitario;
+      
+      return {
+        ...compra,
+        diffAnterior: ((compra.costo_unitario - precioAnterior) / precioAnterior) * 100,
+        diffPromedio: ((compra.costo_unitario - promedio6) / promedio6) * 100
+      };
     });
 
-    // Inventario
-    const numDias = differenceInDays(fin, inicio) || 1;
-    const invData = productos.map(p => {
-      const vendido = pRange.reduce((acc, ped) => acc + (ped.detalle_pedido?.filter((i:any) => i.sku === p.sku).reduce((s:any, i:any) => s + i.quantity, 0) || 0), 0);
-      const vtaDiaria = vendido / numDias;
-      const diasInv = vtaDiaria > 0 ? p.stock_actual / vtaDiaria : 0;
-      return { ...p, stock_actual: Math.round(p.stock_actual), diasInv: Math.round(diasInv) };
+    // Agrupación de compras por categoría para tarjetas expandibles
+    const comprasPorCat: any = {};
+    comprasDetalle.forEach(c => {
+      const prod = productos.find(p => p.sku === c.producto_sku);
+      const cat = prod?.categoria || 'Otros';
+      if (!comprasPorCat[cat]) comprasPorCat[cat] = [];
+      comprasPorCat[cat].push(c);
     });
-
-    // Comparativo Periodo Anterior
-    const duracion = fin.getTime() - inicio.getTime();
-    const pAnt = pedidos.filter(p => isWithinInterval(new Date(p.created_at), { start: new Date(inicio.getTime() - duracion), end: new Date(inicio.getTime()) }));
-    const vAnt = pAnt.reduce((a, b) => a + b.total, 0);
-
-    // Top 5
-    const prodCounts: any = {};
-    pRange.forEach(p => p.detalle_pedido?.forEach((i: any) => {
-      prodCounts[i.nombre] = (prodCounts[i.nombre] || 0) + i.quantity;
-    }));
-    const top5 = Object.entries(prodCounts).sort(([,a]:any, [,b]:any) => b - a).slice(0, 5).map(([n, q]) => [n, Math.round(q as number)]);
 
     return {
-      vTotal, mTotal, ticket: Math.round(vTotal / (pRange.length || 1)), count: pRange.length,
-      vsAnterior: Math.round(vAnt > 0 ? ((vTotal - vAnt) / vAnt) * 100 : 0),
-      chartCategorias, chartPagos, chartHoras: horasData, top5, invData,
-      comprasTotal: Math.round(cRange.reduce((a, b) => a + (b.total_compra || 0), 0)),
-      cRange, mRange, pRange
+      vTotal, comprasTotal, count: pRange.length,
+      comprasPorCat, pRange, mRange, cRange: comprasDetalle,
+      ticket: vTotal / (pRange.length || 1),
+      invValor: productos.reduce((acc, p) => acc + (p.stock_actual * (p.costo || 0)), 0),
+      chartCategorias: Object.entries(GOALS).map(([name]) => {
+        const catP = pRange.flatMap(p => p.detalle_pedido || []).filter((i:any) => i.categoria === name);
+        const venta = catP.reduce((acc, i) => acc + (i.quantity * i.precio_venta), 0);
+        const costo = catP.reduce((acc, i) => acc + (i.quantity * i.costo), 0);
+        return { name, value: Math.round(venta), margin: venta > 0 ? ((venta - costo) / venta) * 100 : 0 };
+      })
     };
   }, [rango, fechaInicio, fechaFin, pedidos, productos, mermas, compras]);
 
-  // --- FUNCIÓN DE EXPORTACIÓN CSV REFORZADA ---
-  const exportCSV = () => {
-    if (!engine.pRange || engine.pRange.length === 0) {
-      alert("No hay pedidos en el periodo seleccionado para exportar.");
-      return;
-    }
-
-    const headers = ["Fecha", "Categoria", "Producto", "Cantidad", "Unidad", "Venta_Total", "Metodo_Pago", "Margen_Real_%"];
-    const rows: any[] = [];
-
-    engine.pRange.forEach(p => {
-      p.detalle_pedido?.forEach((i: any) => {
-        const ventaArticulo = i.quantity * (i.precio_venta || i['$ VENTA'] || 0);
-        const margenArticulo = i.precio_venta > 0 ? ((i.precio_venta - i.costo) / i.precio_venta) * 100 : 0;
-        
-        rows.push([
-          format(new Date(p.created_at), 'yyyy-MM-dd'),
-          `"${i.categoria || 'Otros'}"`,
-          `"${i.nombre}"`,
-          i.quantity.toFixed(0),
-          `"${i.unidad || 'kg'}"`,
-          ventaArticulo.toFixed(0),
-          `"${p.metodo_pago || 'Efectivo'}"`,
-          margenArticulo.toFixed(0)
-        ]);
-      });
-    });
-
-    const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    
-    // El carácter \uFEFF es el BOM (Byte Order Mark) para que Excel abra el CSV en UTF-8 directamente
-    const blob = new Blob(["\uFEFF", csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    // Crear el link de forma física temporalmente para asegurar la descarga en todos los navegadores
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `AMOREE_IA_REPORT_${format(new Date(), 'ddMMyy')}.csv`;
-    
-    document.body.appendChild(link);
-    link.click();
-    
-    // Limpieza
-    setTimeout(() => {
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }, 100);
-  };
-
-  const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7'];
-
-  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse uppercase tracking-[0.5em]">Sincronizando Titanium OS...</div>;
+  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-green-500 font-black animate-pulse uppercase tracking-[0.3em]">Sincronizando Business OS...</div>;
 
   return (
-    <div className="bg-[#050505] min-h-screen p-4 md:p-10 text-white font-sans selection:bg-green-500/30">
+    <div className="bg-[#050505] min-h-screen p-4 md:p-10 text-white font-sans">
       
-      {/* --- SELECTOR DE TIEMPO Y BOTÓN EXPORTAR --- */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-10 bg-[#0A0A0A] p-6 rounded-[35px] border border-white/5 shadow-2xl">
-        <div className="flex bg-white/5 p-1.5 rounded-2xl gap-2 overflow-x-auto no-scrollbar">
-          {['hoy', '7d', '30d', 'custom'].map(id => (
-            <button key={id} onClick={() => setRango(id as any)} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${rango === id ? 'bg-white text-black shadow-xl' : 'text-gray-500'}`}>{id}</button>
-          ))}
+      {/* HEADER ESTRATÉGICO */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10 bg-[#0A0A0A] p-6 rounded-[35px] border border-white/5">
+        <div>
+           <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business Dashboard</span></h1>
+           <p className="text-[8px] font-bold text-gray-500 uppercase tracking-[0.3em]">Socio Tecnológico: Automatiza con Raúl</p>
         </div>
-
-        <div className="flex items-center gap-4">
-          {rango === 'custom' && (
-            <div className="flex items-center gap-3 animate-in fade-in zoom-in">
-              <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black text-green-500 outline-none" />
-              <span className="text-gray-700">→</span>
-              <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black text-green-500 outline-none" />
-            </div>
-          )}
-          <button 
-            onClick={exportCSV}
-            className="flex items-center gap-3 bg-white/5 border border-white/10 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 hover:text-white hover:border-green-500 transition-all group shadow-xl"
-          >
-            <span className="text-lg group-hover:scale-125 transition-transform">📥</span> Exportar para IA
-          </button>
+        <div className="flex bg-white/5 p-1 rounded-2xl gap-2">
+          {['hoy', '7d', '30d', 'custom'].map(id => (
+            <button key={id} onClick={() => setRango(id as any)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${rango === id ? 'bg-white text-black' : 'text-gray-500'}`}>{id}</button>
+          ))}
         </div>
       </div>
 
-      {/* --- NAVEGACIÓN DE 7 PESTAÑAS --- */}
-      <div className="flex overflow-x-auto gap-3 pb-6 border-b border-white/5 mb-10 no-scrollbar sticky top-0 bg-[#050505] z-50">
+      {/* TABS NAVEGACIÓN */}
+      <div className="flex overflow-x-auto gap-3 pb-6 mb-10 no-scrollbar sticky top-0 bg-[#050505] z-50">
         {[
-          { id: 1, label: 'Ejecutivo', icon: '🎯' },
-          { id: 2, label: 'Ventas', icon: '💰' },
-          { id: 3, label: 'Inventario', icon: '📦' },
-          { id: 4, label: 'Merma', icon: '🗑️' },
-          { id: 5, label: 'Rentabilidad', icon: '📊' },
-          { id: 6, label: 'Compras', icon: '🛒' },
-          { id: 7, label: 'Alertas', icon: '🚨' }
+          { id: 1, label: 'Ejecutivo', icon: <Target size={16}/> },
+          { id: 6, label: 'Compras', icon: <ShoppingCart size={16}/> },
+          { id: 5, label: 'Rentabilidad', icon: <TrendingUp size={16}/> },
+          { id: 3, label: 'Inventario', icon: <Package size={16}/> }
         ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-3 px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-white text-black scale-105 shadow-xl' : 'bg-white/5 text-gray-500'}`}>
-            <span className="text-lg">{tab.icon}</span> {tab.label}
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-6 py-4 rounded-[20px] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-white text-black' : 'bg-white/5 text-gray-500'}`}>
+            {tab.icon} {tab.label}
           </button>
         ))}
       </div>
 
-      <main className="animate-in fade-in duration-700">
+      <main className="animate-in fade-in duration-500">
         
-        {/* (1) EJECUTIVO */}
+        {/* (1) EJECUTIVO + PORTAL IA */}
         {activeTab === 1 && (
-          <div className="space-y-10">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
-                <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Venta Total</p>
-                <p className="text-4xl font-black tracking-tighter">{formatCurrencyZero(engine.vTotal)}</p>
-                <div className={`mt-2 text-[10px] font-black ${engine.vsAnterior >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {engine.vsAnterior >= 0 ? '▲' : '▼'} {Math.abs(engine.vsAnterior)}% vs anterior
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-[#0A0A0A] p-8 rounded-[35px] border border-white/5">
+                  <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Venta Periodo</p>
+                  <p className="text-3xl font-black">{formatCurrencyZero(engine.vTotal)}</p>
+                </div>
+                <div className="bg-[#0A0A0A] p-8 rounded-[35px] border border-white/5">
+                  <p className="text-[9px] font-black text-blue-500 uppercase mb-2">Inversión Compra</p>
+                  <p className="text-3xl font-black text-blue-500">{formatCurrencyZero(engine.comprasTotal)}</p>
+                </div>
+                <div className="bg-[#0A0A0A] p-8 rounded-[35px] border border-white/5">
+                  <p className="text-[9px] font-black text-green-500 uppercase mb-2">Ticket Promedio</p>
+                  <p className="text-3xl font-black text-green-500">{formatCurrencyZero(engine.ticket)}</p>
                 </div>
               </div>
-              <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
-                <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-3">Ticket Promedio</p>
-                <p className="text-4xl font-black tracking-tighter">{formatCurrencyZero(engine.ticket)}</p>
-              </div>
-              <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
-                <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-3">Merma Periodo</p>
-                <p className="text-4xl font-black text-red-500 tracking-tighter">{formatCurrencyZero(engine.mTotal)}</p>
-              </div>
-              <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
-                <p className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-3">Margen Real</p>
-                <p className="text-4xl font-black text-green-500 tracking-tighter">
-                  {(engine.chartCategorias.reduce((a,b)=>a+b.margin,0) / (engine.chartCategorias.length || 1)).toFixed(0)}%
-                </p>
+
+              {/* GRÁFICO VENTAS */}
+              <div className="bg-[#0A0A0A] p-10 rounded-[45px] border border-white/5 h-[350px]">
+                 <h3 className="text-[10px] font-black uppercase mb-6 text-gray-400 tracking-widest">Flujo de Caja (Ventas)</h3>
+                 <ResponsiveContainer width="100%" height="90%">
+                    <BarChart data={engine.chartCategorias}>
+                       <XAxis dataKey="name" stroke="#444" fontSize={10} axisLine={false} tickLine={false} />
+                       <Tooltip cursor={{fill: '#ffffff05'}} contentStyle={{backgroundColor: '#000', border: 'none', borderRadius: '15px'}} />
+                       <Bar dataKey="value" fill="#22c55e" radius={[10, 10, 0, 0]} />
+                    </BarChart>
+                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-               <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-                  <h3 className="text-xl font-black italic uppercase mb-8 tracking-tighter">🔥 Top 5 Productos</h3>
-                  <div className="space-y-4">
-                    {engine.top5.map(([name, qty]: any) => (
-                      <div key={name} className="flex justify-between items-center p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
-                        <span className="text-xs font-bold text-gray-400 uppercase">{name}</span>
-                        <span className="text-xs font-black text-white">{qty} kg/pza</span>
-                      </div>
-                    ))}
+            {/* PORTAL DE IA - DIRECTIVAS DE RAÚL */}
+            <div className="bg-[#0A0A0A] p-8 rounded-[40px] border border-green-500/20 shadow-[0_0_40px_rgba(34,197,94,0.05)]">
+               <div className="flex items-center gap-3 mb-6">
+                  <div className="p-3 bg-green-500/10 rounded-2xl text-green-500"><Brain size={20}/></div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase italic tracking-tighter">Directivas IA</h3>
+                    <p className="text-[7px] text-gray-500 font-bold uppercase">Análisis de Raúl (NotebookLM)</p>
                   </div>
                </div>
-               <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-                  <h3 className="text-xl font-black italic uppercase mb-8 tracking-tighter text-red-500">Agotados Críticos</h3>
-                  <div className="space-y-4">
-                    {productos.filter(p => p.stock_actual <= 0).slice(0, 4).map(p => (
-                      <div key={p.sku} className="flex justify-between items-center p-4 bg-red-600/5 border border-red-600/20 rounded-2xl">
-                        <span className="text-xs font-bold text-red-500 uppercase">{p.nombre}</span>
-                        <span className="text-xs font-black text-white">SIN STOCK</span>
-                      </div>
-                    ))}
-                  </div>
+               <textarea 
+                  value={notasIA}
+                  onChange={(e) => setNotasIA(e.target.value)}
+                  placeholder="PEGA AQUÍ EL ANÁLISIS DE NOTEBOOKLM PARA QUE HUGO LO VEA..."
+                  className="w-full h-[400px] bg-black/50 border border-white/5 rounded-2xl p-4 text-[11px] font-medium leading-relaxed text-gray-300 outline-none focus:border-green-500/30 transition-all placeholder:text-gray-700"
+               />
+               <p className="mt-4 text-[8px] text-center font-bold text-gray-600 uppercase italic">Los cambios se guardan automáticamente para Hugo</p>
+            </div>
+          </div>
+        )}
+
+        {/* (6) COMPRAS TITANIUM - TARJETAS EXPANDIBLES */}
+        {activeTab === 6 && (
+          <div className="space-y-6">
+            <div className="bg-blue-600/10 border border-blue-500/20 p-8 rounded-[40px] flex justify-between items-center">
+               <div>
+                  <p className="text-[9px] font-black text-blue-500 uppercase mb-1">Inversión Total del Día</p>
+                  <p className="text-4xl font-black">{formatCurrencyZero(engine.comprasTotal)}</p>
+               </div>
+               <div className="text-right">
+                  <p className="text-[9px] font-black text-gray-500 uppercase">Items Surtidos</p>
+                  <p className="text-2xl font-black text-white">{engine.cRange.length}</p>
                </div>
             </div>
-          </div>
-        )}
 
-        {/* (2) VENTAS */}
-        {activeTab === 2 && (
-          <div className="space-y-10">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[400px]">
-                <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest">Ventas por Categoría</h3>
-                <ResponsiveContainer width="100%" height="90%">
-                  <PieChart>
-                    <Pie data={engine.chartCategorias} innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value" label={({name}) => name}>
-                      {engine.chartCategorias.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{backgroundColor: '#111', color: '#fff', border: 'none', borderRadius: '15px'}} itemStyle={{color: '#fff'}} />
-                    <Legend wrapperStyle={{fontSize: '10px', color: '#fff', textTransform: 'uppercase'}} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[400px]">
-                <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest">Método de Pago</h3>
-                <ResponsiveContainer width="100%" height="90%">
-                   <BarChart data={engine.chartPagos} layout="vertical">
-                      <XAxis type="number" hide />
-                      <YAxis dataKey="name" type="category" stroke="#fff" fontSize={10} fontStyle="bold" axisLine={false} tickLine={false} />
-                      <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#111', color: '#fff', border: 'none', borderRadius: '15px'}} />
-                      <Bar dataKey="value" fill="#22c55e" radius={[0, 10, 10, 0]} />
-                   </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[400px]">
-              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest text-center">Intensidad por Horario</h3>
-              <ResponsiveContainer width="100%" height="80%">
-                <BarChart data={engine.chartHoras}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                  <XAxis dataKey="hora" stroke="#666" fontSize={10} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{fill: '#ffffff05'}} contentStyle={{backgroundColor: '#111', border: 'none', borderRadius: '15px'}} />
-                  <Bar dataKey="total" fill="#22c55e" radius={[10, 10, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
+            <div className="space-y-4">
+              {Object.entries(engine.comprasPorCat).map(([cat, items]: any) => (
+                <div key={cat} className="rounded-[30px] border border-white/5 bg-[#0A0A0A] overflow-hidden">
+                  <button 
+                    onClick={() => setExpandedCompraCat(expandedCompraCat === cat ? null : cat)}
+                    className="w-full p-6 flex items-center justify-between hover:bg-white/[0.02] transition-all"
+                  >
+                    <div className="flex items-center gap-4">
+                       <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                       <h3 className="text-[10px] font-black uppercase tracking-widest">{cat}</h3>
+                    </div>
+                    <ChevronDown size={16} className={`text-gray-600 transition-transform ${expandedCompraCat === cat ? 'rotate-180' : ''}`} />
+                  </button>
 
-        {/* (3) INVENTARIO */}
-        {activeTab === 3 && (
-          <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 overflow-x-auto">
-            <h3 className="text-xl font-black italic uppercase mb-8">Rotación de Existencias</h3>
-            <table className="w-full text-left">
-              <thead>
-                <tr className="text-[10px] font-black text-gray-500 uppercase border-b border-white/5">
-                  <th className="pb-6">Artículo</th>
-                  <th className="pb-6">Stock Actual</th>
-                  <th className="pb-6">Días Inventario</th>
-                  <th className="pb-6">Estatus</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {engine.invData.map(p => (
-                  <tr key={p.sku} className="hover:bg-white/[0.02]">
-                    <td className="py-6 font-bold text-xs uppercase">{p.nombre}</td>
-                    <td className="py-6 font-black text-sm">{p.stock_actual} {p.unidad}</td>
-                    <td className="py-6 font-black text-sm text-green-500">{p.diasInv} días</td>
-                    <td className="py-6">
-                       {p.stock_actual <= 0 ? <span className="bg-red-600 px-3 py-1 rounded-full text-[8px] font-black">AGOTADO</span> :
-                        p.diasInv < 1 ? <span className="bg-amber-600 px-3 py-1 rounded-full text-[8px] font-black">REABASTECER</span> :
-                        <span className="bg-green-600 px-3 py-1 rounded-full text-[8px] font-black">SALUDABLE</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* (4) MERMA */}
-        {activeTab === 4 && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-            <div className="lg:col-span-1 bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-fit shadow-2xl">
-              <h3 className="text-2xl font-black uppercase italic mb-10 tracking-tighter">Registrar Merma</h3>
-              <div className="space-y-6">
-                <select value={skuMerma} onChange={(e) => setSkuMerma(e.target.value)} className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl text-sm font-black text-white outline-none">
-                  <option value="" className="bg-black text-gray-600">-- Seleccionar --</option>
-                  {productos.map(p => <option key={p.sku} value={p.sku} className="bg-black">{p.nombre}</option>)}
-                </select>
-                <input type="number" placeholder="Cantidad" value={cantMerma} onChange={(e) => setCantMerma(e.target.value)} className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl text-xl font-black outline-none" />
-                <button onClick={async () => {
-                  const p = productos.find(x => x.sku === skuMerma);
-                  if(!p || !cantMerma) return;
-                  const perdida = Math.round(parseFloat(cantMerma) * (p.costo || 0));
-                  await supabase.from('merma').insert([{ 
-                    producto_sku: p.sku, nombre_producto: p.nombre, cantidad: parseFloat(cantMerma), 
-                    unidad: p.unidad, costo_unitario: p.costo, total_perdida: perdida, 
-                    motivo: motivoMerma, categoria: p.categoria 
-                  }]);
-                  await supabase.from('productos').update({ stock_actual: (p.stock_actual || 0) - parseFloat(cantMerma) }).eq('sku', p.sku);
-                  alert("Registrado ✅"); setCantMerma(''); setSkuMerma('');
-                }} className="w-full bg-red-600 text-white py-6 rounded-3xl font-black uppercase text-xs tracking-widest shadow-2xl">🗑️ Registrar</button>
-              </div>
-            </div>
-            <div className="lg:col-span-2 bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[500px] overflow-y-auto">
-              <h3 className="text-sm font-black uppercase italic mb-8">Historial de Pérdidas</h3>
-              {engine.mRange.map(m => (
-                <div key={m.id} className="flex justify-between items-center p-6 bg-white/[0.02] border border-white/5 rounded-3xl mb-3">
-                  <div><p className="text-xs font-black uppercase">{m.nombre_producto}</p><p className="text-[9px] font-bold text-gray-500 uppercase">{format(new Date(m.created_at), 'dd MMM')} • {m.motivo}</p></div>
-                  <p className="text-sm font-black text-red-500">-{formatCurrencyZero(m.total_perdida)}</p>
+                  {expandedCompraCat === cat && (
+                    <div className="px-6 pb-6 space-y-3">
+                      {items.map((c: any) => (
+                        <div key={c.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex justify-between items-center">
+                           <div className="w-1/2">
+                              <p className="text-[10px] font-black uppercase">{c.nombre_producto}</p>
+                              <p className="text-[7px] font-bold text-gray-600 uppercase">{c.cantidad} {c.unidad} @ {formatCurrency(c.costo_unitario)}</p>
+                           </div>
+                           <div className="flex gap-4 items-center">
+                              <div className="text-right">
+                                 <p className="text-[8px] font-black text-gray-500 uppercase mb-1">vs Anterior</p>
+                                 <div className={`flex items-center gap-1 text-[10px] font-black ${c.diffAnterior <= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                    {c.diffAnterior <= 0 ? <TrendingDown size={12}/> : <TrendingUp size={12}/>}
+                                    {Math.abs(c.diffAnterior).toFixed(1)}%
+                                 </div>
+                              </div>
+                              <div className="w-[1px] h-8 bg-white/5"></div>
+                              <div className="text-right">
+                                 <p className="text-[8px] font-black text-gray-500 uppercase mb-1">Total</p>
+                                 <p className="text-[11px] font-black">{formatCurrencyZero(c.total_compra)}</p>
+                              </div>
+                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -408,92 +265,41 @@ export default function Dashboard() {
 
         {/* (5) RENTABILIDAD */}
         {activeTab === 5 && (
-          <div className="space-y-10">
-            <h3 className="text-xl font-black italic uppercase tracking-tighter text-green-500">Margen Real vs Objetivo</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {engine.chartCategorias.map(cat => (
-                <div key={cat.name} className="bg-[#0A0A0A] p-10 rounded-[45px] border border-white/5 text-center transition-transform hover:scale-105">
-                  <p className="text-[10px] font-black text-gray-500 uppercase mb-4 tracking-widest">{cat.name}</p>
-                  <p className="text-4xl font-black text-green-500 mb-2">{cat.margin.toFixed(0)}%</p>
-                  <p className="text-[9px] font-bold text-gray-600 uppercase">Objetivo: {GOALS[cat.name] || 'N/A'}%</p>
-                  <div className="mt-4 h-2 bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-green-500 transition-all duration-1000" style={{ width: `${(cat.margin / (GOALS[cat.name] || 40)) * 100}%` }}></div>
-                  </div>
+                <div key={cat.name} className="bg-[#0A0A0A] p-8 rounded-[40px] border border-white/5">
+                   <p className="text-[9px] font-black text-gray-500 uppercase mb-4 tracking-widest">{cat.name}</p>
+                   <p className={`text-4xl font-black mb-2 ${cat.margin < (GOALS[cat.name] || 0) ? 'text-red-500' : 'text-green-500'}`}>
+                      {cat.margin.toFixed(0)}%
+                   </p>
+                   <p className="text-[8px] font-bold text-gray-700 uppercase">Objetivo: {GOALS[cat.name]}%</p>
                 </div>
               ))}
-            </div>
-          </div>
+           </div>
         )}
 
-        {/* (6) COMPRAS */}
-        {activeTab === 6 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5">
-              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Total Compras del Periodo</p>
-              <p className="text-5xl font-black text-blue-500">{formatCurrencyZero(engine.comprasTotal)}</p>
-              <p className="text-[9px] font-bold text-gray-600 mt-4 uppercase">Impacto sobre Ventas: {((engine.comprasTotal / (engine.vTotal || 1)) * 100).toFixed(0)}%</p>
-            </div>
-            <div className="bg-[#0A0A0A] p-10 rounded-[50px] border border-white/5 h-[400px] overflow-y-auto">
-              <h3 className="text-sm font-black uppercase italic mb-8 tracking-widest">Suministros Detallados</h3>
-              {engine.cRange.slice(0, 10).map(c => (
-                <div key={c.id} className="flex justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl mb-2">
-                  <span className="text-[10px] font-black uppercase">{c.proveedor || 'General'}</span>
-                  <span className="text-[10px] font-black">{formatCurrencyZero(c.total_compra)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* (7) ALERTAS */}
-        {activeTab === 7 && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {productos.filter(p => p.stock_actual <= 0).map(p => (
-              <div key={p.sku} className="bg-red-600/10 border-2 border-red-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-red-500 uppercase mb-2">AGOTADO TOTAL</p>
-                <h4 className="text-xl font-black uppercase">{p.nombre}</h4>
-                <p className="text-[9px] font-bold text-gray-400 mt-2">Llamar a proveedor urgente.</p>
+        {/* (3) INVENTARIO */}
+        {activeTab === 3 && (
+           <div className="space-y-8">
+              <div className="bg-[#0A0A0A] p-10 rounded-[45px] border border-white/5 flex justify-between items-center">
+                 <div>
+                    <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Valor Total del Inventario</p>
+                    <p className="text-5xl font-black text-amber-500">{formatCurrencyZero(engine.invValor)}</p>
+                 </div>
+                 <Package size={48} className="text-white/5" />
               </div>
-            ))}
-            {engine.invData.filter(p => p.diasInv < 1 && p.stock_actual > 0).map(p => (
-              <div key={p.sku} className="bg-amber-600/10 border-2 border-amber-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-amber-500 uppercase mb-2">RESURTIDO CRÍTICO</p>
-                <h4 className="text-xl font-black uppercase">{p.nombre}</h4>
-                <p className="text-[10px] font-bold text-white mt-2">Días rest: {p.diasInv}</p>
-              </div>
-            ))}
-            {engine.chartCategorias.filter(c => c.margin < (GOALS[c.name] || 0)).map(c => (
-              <div key={c.name} className="bg-blue-600/10 border-2 border-blue-600 p-8 rounded-[40px] text-center">
-                <p className="text-[9px] font-black text-blue-500 uppercase mb-2">BAJO MARGEN</p>
-                <h4 className="text-xl font-black uppercase">{c.name}</h4>
-                <p className="text-[10px] font-bold text-white mt-2">Margen Real: {c.margin}%</p>
-              </div>
-            ))}
-          </div>
+           </div>
         )}
 
       </main>
 
       {/* FOOTER SWISS MADE */}
-      <div className="fixed bottom-10 left-10 z-[100] hidden lg:block">
-         <div className="bg-black/90 backdrop-blur-3xl border border-white/10 p-6 rounded-[40px] flex items-center gap-6 shadow-2xl">
-            <div className="w-14 h-14 bg-green-600 rounded-2xl flex items-center justify-center text-3xl shadow-xl shadow-green-600/20">🚀</div>
-            <div>
-               <p className="text-[12px] font-black text-white uppercase tracking-tighter mb-1 leading-none">Amoree Business OS</p>
-               <p className="text-[9px] font-bold text-green-500/40 uppercase tracking-[0.4em]">Engineering Partner</p>
-            </div>
+      <div className="fixed bottom-6 right-6 hidden md:block">
+         <div className="bg-black/80 backdrop-blur-xl border border-white/10 px-6 py-4 rounded-3xl flex items-center gap-4">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+            <p className="text-[9px] font-black uppercase tracking-widest">Sincronizado con Supabase Realtime</p>
          </div>
       </div>
     </div>
   );
 }
-
-const tabs = [
-  { id: 1, label: 'Ejecutivo', icon: '🎯' },
-  { id: 2, label: 'Ventas', icon: '💰' },
-  { id: 3, label: 'Inventario', icon: '📦' },
-  { id: 4, label: 'Merma', icon: '🗑️' },
-  { id: 5, label: 'Rentabilidad', icon: '📊' },
-  { id: 6, label: 'Compras', icon: '🛒' },
-  { id: 7, label: 'Alertas', icon: '🚨' }
-];
