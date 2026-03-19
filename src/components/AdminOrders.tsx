@@ -5,12 +5,15 @@ import Dashboard from './Dashboard';
 import POS from './POS';
 import ClientsModule from './ClientsModule';
 import RutaDeCompra from './RutaDeCompra';
+import InventoryModule from './InventoryModule'; // 📦 Nuevo Módulo de Inventario
+import { Scanner } from './Scanner';
 import { format } from 'date-fns';
+import { Package, LayoutDashboard, ShoppingBag, Users, BarChart3, Truck, Calculator, X } from 'lucide-react';
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta'>('orders');
+  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory'>('orders');
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -49,16 +52,6 @@ export default function AdminOrders() {
     }
   };
 
-  const updateClientDebt = async (nombre: string, telefono: string, monto: number) => {
-    const { data: client } = await supabase.from('clientes').select('*').eq('telefono', telefono).single();
-    if (client) {
-      const nuevoSaldo = (client.saldo_deudor || 0) + monto;
-      await supabase.from('clientes').update({ saldo_deudor: nuevoSaldo }).eq('id', client.id);
-    } else {
-      await supabase.from('clientes').insert([{ nombre: nombre.toUpperCase(), telefono, saldo_deudor: monto }]);
-    }
-  };
-
   // --- 🔄 GESTOR DE ESTADOS LÓGICOS ---
   const handleConfirmWeights = async (order: any) => {
     const { error } = await supabase.from('pedidos').update({ 
@@ -68,7 +61,7 @@ export default function AdminOrders() {
     }).eq('id', order.id);
 
     if (!error) {
-      const msg = `*AMOREE - Confirmación de Pesos* 🥑\n\n¡Hola! Ya pesamos tu pedido:\n` +
+      const msg = `*AMOREE - Pesos Confirmados* 🥑\n\n¡Hola! Ya pesamos tu pedido:\n` +
                   order.detalle_pedido.map((i:any) => `- ${i.nombre}: ${i.quantity}${i.unidad || 'kg'} = *${formatCurrency(i.quantity * (i.precio_venta || i['$ VENTA']))}*`).join('\n') +
                   `\n\n*TOTAL FINAL: ${formatCurrency(order.total)}*\n\nFavor de enviar comprobante. 🚀`;
       sendWA(order.telefono_cliente, msg);
@@ -77,11 +70,19 @@ export default function AdminOrders() {
   };
 
   const handleRegisterPayment = async (order: any, metodo: string) => {
-    if (metodo === 'A Cuenta') await updateClientDebt(order.nombre_cliente, order.telefono_cliente, order.total);
+    if (metodo === 'A Cuenta') {
+      const { data: client } = await supabase.from('clientes').select('*').eq('telefono', order.telefono_cliente).single();
+      if (client) {
+        await supabase.from('clientes').update({ saldo_deudor: (client.saldo_deudor || 0) + order.total }).eq('id', client.id);
+      } else {
+        await supabase.from('clientes').insert([{ nombre: order.nombre_cliente.toUpperCase(), telefono: order.telefono_cliente, saldo_deudor: order.total }]);
+      }
+    }
+
     const { error } = await supabase.from('pedidos').update({ estado: 'Pagado - Por Entregar', metodo_pago: metodo }).eq('id', order.id);
     if (!error) {
       const msg = metodo === 'A Cuenta' 
-        ? `*AMOREE - Registro Crédito* 📑\n\nPedido por *${formatCurrency(order.total)}* registrado A CUENTA.\n\nEntrega PROGRAMADA. 🛵`
+        ? `*AMOREE - Crédito Registrado* 📑\n\nPedido por *${formatCurrency(order.total)}* registrado A CUENTA.\n\nEntrega PROGRAMADA. 🛵`
         : `*AMOREE - Pago Recibido* ✅\n\nConfirmamos pago por *${formatCurrency(order.total)}* vía *${metodo}*.\n\nEntrega PROGRAMADA. 🛵`;
       sendWA(order.telefono_cliente, msg);
       fetchOrders();
@@ -92,7 +93,7 @@ export default function AdminOrders() {
     const { error } = await supabase.from('pedidos').update({ estado: 'Finalizado' }).eq('id', order.id);
     if (!error) {
       await discountStock(order.detalle_pedido);
-      const msg = `*AMOREE - Pedido Entregado* 📦\n\n¡Tu pedido ha llegado con éxito! Gracias por tu preferencia. 🥑✨`;
+      const msg = `*AMOREE - Pedido Entregado* 📦\n\n¡Tu pedido ha llegado! Gracias por tu confianza. 🥑✨`;
       sendWA(order.telefono_cliente, msg);
       fetchOrders();
     }
@@ -107,7 +108,7 @@ export default function AdminOrders() {
     );
 
     const resumen = ventasHoy.reduce((acc, o) => {
-      const metodo = o.metodo_pago || 'Pendiente/Otro';
+      const metodo = o.metodo_pago || 'Efectivo';
       acc[metodo] = (acc[metodo] || 0) + o.total;
       acc['Total'] = (acc['Total'] || 0) + o.total;
       return acc;
@@ -119,20 +120,12 @@ export default function AdminOrders() {
 
   const enviarCorteWA = () => {
     const fecha = format(new Date(), 'dd/MM/yyyy');
-    let msg = `*AMOREE - CORTE DE CAJA* 🏦\n`;
-    msg += `*Fecha:* ${fecha}\n`;
-    msg += `--------------------------\n`;
-    msg += `💵 Efectivo: *${formatCurrency(corteSummary.Efectivo)}*\n`;
-    msg += `🏦 Transf: *${formatCurrency(corteSummary.Transferencia)}*\n`;
-    msg += `💳 Terminal: *${formatCurrency(corteSummary.Terminal)}*\n`;
-    msg += `📑 A Cuenta: *${formatCurrency(corteSummary['A Cuenta'])}*\n`;
-    msg += `--------------------------\n`;
-    msg += `💰 *TOTAL DÍA: ${formatCurrency(corteSummary.Total)}*\n`;
-    msg += `📦 Pedidos: ${corteSummary.cantidad}\n\n`;
-    msg += `🚀 *Generado por Automatiza con Raul*`;
+    let msg = `*AMOREE - CORTE DE CAJA* 🏦\n*Fecha:* ${fecha}\n--------------------------\n`;
+    msg += `💵 Efectivo: *${formatCurrency(corteSummary.Efectivo)}*\n🏦 Transf: *${formatCurrency(corteSummary.Transferencia)}*\n`;
+    msg += `💳 Terminal: *${formatCurrency(corteSummary.Terminal)}*\n📑 A Cuenta: *${formatCurrency(corteSummary['A Cuenta'])}*\n--------------------------\n`;
+    msg += `💰 *TOTAL DÍA: ${formatCurrency(corteSummary.Total)}*\n📦 Pedidos: ${corteSummary.cantidad}\n\n🚀 *Automatiza con Raul*`;
 
-    const telDuenio = "52XXXXXXXXXX"; // Aquí puedes poner el cel del dueño
-    window.open(`https://wa.me/${telDuenio}?text=${encodeURIComponent(msg)}`, '_blank');
+    sendWA("52XXXXXXXXXX", msg); // Configurar cel del dueño
     setShowCorteModal(false);
   };
 
@@ -146,30 +139,40 @@ export default function AdminOrders() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white pb-32">
-      {/* HEADER */}
-      <div className="bg-black/90 p-6 border-b border-white/5 flex justify-between items-center sticky top-0 z-[100] backdrop-blur-xl">
+      {/* HEADER DE NAVEGACIÓN TITANIUM */}
+      <div className="bg-black/90 p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center sticky top-0 z-[100] backdrop-blur-xl gap-4">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
-        <div className="flex bg-white/5 p-1 rounded-2xl gap-1">
-          {['orders', 'ruta', 'pos', 'clients', 'stats'].map(v => (
-            <button key={v} onClick={() => setView(v as any)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase ${view === v ? 'bg-white text-black' : 'text-gray-500'}`}>{v}</button>
+        
+        <div className="flex bg-white/5 p-1 rounded-2xl gap-1 overflow-x-auto no-scrollbar w-full md:w-auto">
+          {[
+            { id: 'orders', label: 'Pedidos', icon: <ShoppingBag size={14}/> },
+            { id: 'inventory', label: 'Inventario', icon: <Package size={14}/> },
+            { id: 'pos', label: 'Terminal', icon: <Calculator size={14}/> },
+            { id: 'clients', label: 'Cartera', icon: <Users size={14}/> },
+            { id: 'ruta', label: 'Ruta', icon: <Truck size={14}/> },
+            { id: 'stats', label: 'Métricas', icon: <BarChart3 size={14}/> }
+          ].map(v => (
+            <button 
+              key={v.id} 
+              onClick={() => setView(v.id as any)} 
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all whitespace-nowrap ${view === v.id ? 'bg-white text-black' : 'text-gray-500 hover:text-white'}`}
+            >
+              {v.icon} {v.label}
+            </button>
           ))}
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto p-4 md:p-8">
-        {view === 'orders' && (
+        {view === 'orders' ? (
           <>
             <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-10">
               <div className="flex bg-[#0A0A0A] p-2 rounded-[30px] border border-white/5 gap-2 w-full md:w-auto">
                 <button onClick={() => setOrderTab('whatsapp')} className={`flex-1 px-8 py-4 rounded-[22px] text-[10px] font-black uppercase ${orderTab === 'whatsapp' ? 'bg-green-600' : 'text-gray-500'}`}>🛵 WhatsApp</button>
                 <button onClick={() => setOrderTab('terminal')} className={`flex-1 px-8 py-4 rounded-[22px] text-[10px] font-black uppercase ${orderTab === 'terminal' ? 'bg-white text-black' : 'text-gray-500'}`}>🏪 Terminal</button>
               </div>
-              
-              <button 
-                onClick={prepararCorte}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest shadow-lg transition-all active:scale-95"
-              >
-                🏦 Corte de Caja
+              <button onClick={prepararCorte} className="w-full md:w-auto bg-blue-600 hover:bg-blue-500 text-white px-10 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all">
+                <Calculator size={16}/> Corte de Caja
               </button>
             </div>
 
@@ -182,7 +185,7 @@ export default function AdminOrders() {
                         {order.estado}
                       </span>
                       <h3 className="text-2xl font-black uppercase italic">{order.nombre_cliente}</h3>
-                      <p className="text-[9px] text-gray-500">{order.telefono_cliente}</p>
+                      <p className="text-[9px] text-gray-500 font-bold">{order.telefono_cliente}</p>
                     </div>
                     <p className="text-xl font-black">{formatCurrency(order.total)}</p>
                   </div>
@@ -191,68 +194,52 @@ export default function AdminOrders() {
                     {order.estado === 'Pendiente' && <button onClick={() => handleConfirmWeights(order)} className="bg-green-600 text-white w-full py-5 rounded-2xl font-black uppercase">⚖️ Confirmar Pesos</button>}
                     {order.estado === 'Pendiente de Pago' && (
                       <div className="grid grid-cols-2 gap-3">
-                        {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(metodo => (
-                          <button key={metodo} onClick={() => handleRegisterPayment(order, metodo)} className="bg-white/5 border border-white/10 py-4 rounded-xl text-[9px] font-black uppercase hover:bg-white hover:text-black transition-colors">{metodo}</button>
+                        {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(m => (
+                          <button key={m} onClick={() => handleRegisterPayment(order, m)} className="bg-white/5 border border-white/10 py-4 rounded-xl text-[9px] font-black uppercase hover:bg-white hover:text-black transition-colors">{m}</button>
                         ))}
                       </div>
                     )}
-                    {order.estado === 'Pagado - Por Entregar' && <button onClick={() => handleDeliver(order)} className="bg-white text-black w-full py-5 rounded-2xl font-black uppercase">📦 Entregado</button>}
+                    {order.estado === 'Pagado - Por Entregar' && <button onClick={() => handleDeliver(order)} className="bg-white text-black w-full py-5 rounded-2xl font-black uppercase">📦 Marcar Entregado</button>}
                   </div>
                 </div>
               ))}
             </div>
           </>
+        ) : view === 'inventory' ? (
+          <InventoryModule onBack={() => setView('orders')} />
+        ) : view === 'ruta' ? (
+          <RutaDeCompra onBack={() => setView('orders')} />
+        ) : view === 'pos' ? (
+          <POS onBack={() => setView('orders')} />
+        ) : view === 'stats' ? (
+          <Dashboard />
+        ) : (
+          <ClientsModule />
         )}
+      </div>
 
-        {/* MODAL DE CORTE DE CAJA */}
-        {showCorteModal && corteSummary && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowCorteModal(false)}></div>
-            <div className="bg-[#0F0F0F] border border-white/10 rounded-[40px] p-8 md:p-12 w-full max-w-lg relative shadow-2xl animate-in zoom-in-95 duration-200">
-              <h2 className="text-3xl font-black uppercase italic tracking-tighter mb-2 text-blue-500">Resumen de Corte</h2>
-              <p className="text-[10px] font-black text-gray-500 uppercase mb-8">Validación de ventas del día</p>
-              
-              <div className="space-y-4 mb-10">
-                {[
-                  { label: '💵 Efectivo', val: corteSummary.Efectivo },
-                  { label: '🏦 Transferencias', val: corteSummary.Transferencia },
-                  { label: '💳 Terminal', val: corteSummary.Terminal },
-                  { label: '📑 A Cuenta', val: corteSummary['A Cuenta'] }
-                ].map(item => (
-                  <div key={item.label} className="flex justify-between items-center bg-white/[0.03] p-4 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-black text-gray-400 uppercase">{item.label}</span>
-                    <span className="text-lg font-black">{formatCurrency(item.val)}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between items-center bg-blue-600/10 p-6 rounded-3xl border border-blue-500/30 mt-6">
-                  <span className="text-xs font-black uppercase">Total Ventas</span>
-                  <span className="text-3xl font-black text-blue-400">{formatCurrency(corteSummary.Total)}</span>
+      {/* MODAL CORTE DE CAJA */}
+      {showCorteModal && corteSummary && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="bg-[#0F0F0F] border border-white/10 rounded-[40px] p-10 w-full max-w-lg relative animate-in zoom-in-95 duration-200">
+            <button onClick={() => setShowCorteModal(false)} className="absolute top-8 right-8 text-gray-500"><X/></button>
+            <h2 className="text-3xl font-black uppercase italic text-blue-500 mb-8">Resumen de Corte</h2>
+            <div className="space-y-4 mb-10">
+              {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(m => (
+                <div key={m} className="flex justify-between items-center bg-white/[0.03] p-4 rounded-2xl border border-white/5">
+                  <span className="text-[10px] font-black text-gray-400 uppercase">{m}</span>
+                  <span className="text-lg font-black">{formatCurrency(corteSummary[m])}</span>
                 </div>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <button 
-                  onClick={enviarCorteWA}
-                  className="bg-white text-black w-full py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] hover:scale-[1.02] transition-transform"
-                >
-                  🚀 Confirmar y Enviar a WhatsApp
-                </button>
-                <button 
-                  onClick={() => setShowCorteModal(false)}
-                  className="text-gray-500 text-[9px] font-black uppercase hover:text-white transition-colors py-2"
-                >
-                  Cancelar
-                </button>
+              ))}
+              <div className="flex justify-between items-center bg-blue-600/10 p-6 rounded-3xl border border-blue-500/30 mt-6">
+                <span className="text-xs font-black uppercase">Ventas Totales</span>
+                <span className="text-3xl font-black text-blue-400">{formatCurrency(corteSummary.Total)}</span>
               </div>
             </div>
+            <button onClick={enviarCorteWA} className="w-full bg-white text-black py-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Confirmar y Enviar</button>
           </div>
-        )}
-        
-        {view === 'ruta' && <RutaDeCompra onBack={() => setView('orders')} />}
-        {view === 'pos' && <POS onBack={() => setView('orders')} />}
-        {view === 'stats' && <Dashboard />}
-        {view === 'clients' && <ClientsModule />}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
