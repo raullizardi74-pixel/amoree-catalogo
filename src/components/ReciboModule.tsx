@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import { Scanner } from './Scanner';
-import { Truck, Camera, Save, ArrowLeft, AlertCircle, Package, Search } from 'lucide-react';
+import { Truck, Camera, Save, ArrowLeft, AlertCircle, Package, Search, Hash } from 'lucide-react';
 
 export default function ReciboModule({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState<'provider' | 'receipt'>('provider');
@@ -13,6 +13,8 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
   const [cambios, setCambios] = useState<Record<number, { cantidad: string, nuevoCosto: string }>>({});
   const [showScanner, setShowScanner] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  // ✅ ESTADO PARA EL FOLIO
+  const [folio, setFolio] = useState('');
 
   useEffect(() => { fetchProveedores(); }, []);
 
@@ -37,7 +39,6 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
     }));
   };
 
-  // --- LÓGICA HÍBRIDA: ESCÁNER ---
   const handleScanSuccess = (sku: string) => {
     const index = productosProveedor.findIndex(p => p.sku === sku);
     if (index !== -1) {
@@ -51,31 +52,76 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
     setShowScanner(false);
   };
 
+  // ✅ LÓGICA DE GUARDADO TITANIUM (AFECTA INVENTARIO Y CREA AUDITORÍA)
   const saveReceipt = async () => {
     if (Object.keys(cambios).length === 0) return alert("No hay cambios que guardar.");
+    if (!folio.trim()) return alert("⚠️ El Folio/Remisión es obligatorio para el registro de compra.");
+
     setLoading(true);
     try {
+      let totalCompra = 0;
+      const detallesParaInsertar = [];
+
+      // 1. Calculamos el total y preparamos los datos del detalle
       for (const id in cambios) {
         const item = cambios[id];
         const prodOriginal = productosProveedor.find(p => p.id === parseInt(id));
-        if (!prodOriginal) continue;
-
-        const updates: any = {};
+        
         if (item.cantidad && item.cantidad !== '') {
-          updates.stock_actual = (prodOriginal.stock_actual || 0) + parseFloat(item.cantidad);
-        }
-        if (item.nuevoCosto && item.nuevoCosto !== '') {
-          updates.costo = parseFloat(item.nuevoCosto);
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await supabase.from('productos').update(updates).eq('id', id);
+          const cantidadRecibida = parseFloat(item.cantidad);
+          const costoUnitario = item.nuevoCosto ? parseFloat(item.nuevoCosto) : prodOriginal.costo;
+          const subtotal = cantidadRecibida * costoUnitario;
+          
+          totalCompra += subtotal;
+          
+          detallesParaInsertar.push({
+            producto_id: prodOriginal.id,
+            sku: prodOriginal.sku,
+            nombre: prodOriginal.nombre,
+            cantidad: cantidadRecibida,
+            costo_unitario: costoUnitario,
+            subtotal: subtotal
+          });
         }
       }
-      alert("✅ Inventario actualizado correctamente.");
+
+      // 2. Insertamos la cabecera de la compra
+      const { data: compra, error: errorCompra } = await supabase
+        .from('compras')
+        .insert([{ 
+          proveedor_id: selectedProvider.id, 
+          folio: folio.toUpperCase(), 
+          total: totalCompra,
+          metodo_pago: 'Efectivo' // Como nos dijiste, se pagan al momento
+        }])
+        .select()
+        .single();
+
+      if (errorCompra) throw errorCompra;
+
+      // 3. Insertamos el detalle y actualizamos el stock/costo de cada producto
+      for (const detalle of detallesParaInsertar) {
+        // Insertar en compras_detalle
+        await supabase.from('compras_detalle').insert([{
+          compra_id: compra.id,
+          ...detalle
+        }]);
+
+        // Actualizar tabla productos (Sincronización total)
+        const prodOriginal = productosProveedor.find(p => p.id === detalle.producto_id);
+        const nuevoStock = (prodOriginal.stock_actual || 0) + detalle.cantidad;
+        
+        await supabase.from('productos').update({ 
+          stock_actual: nuevoStock,
+          costo: detalle.costo_unitario 
+        }).eq('id', detalle.producto_id);
+      }
+
+      alert(`✅ Compra ${folio} registrada. Total: ${formatCurrency(totalCompra)}`);
       onBack();
-    } catch (e) {
-      alert("Error al procesar el recibo.");
+    } catch (e: any) {
+      console.error(e);
+      alert("Error al procesar el recibo: " + e.message);
     }
     setLoading(false);
   };
@@ -104,14 +150,33 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="min-h-screen pb-20 animate-in slide-in-from-right duration-500">
+      {/* HEADER DINÁMICO CON CAMPO DE FOLIO */}
       <div className="sticky top-20 bg-black/90 backdrop-blur-xl z-[60] p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-black uppercase italic">{selectedProvider.nombre}</h2>
-          <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase">Recibo de Mercancía Activo</p>
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div>
+            <h2 className="text-2xl font-black uppercase italic leading-none">{selectedProvider.nombre}</h2>
+            <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase mt-1">Recibo de Mercancía</p>
+          </div>
+          <div className="flex-1 md:w-48 bg-white/5 p-3 rounded-2xl border border-white/10">
+            <label className="text-[8px] font-black text-gray-500 uppercase block mb-1 flex items-center gap-1"><Hash size={10}/> Folio de Nota</label>
+            <input 
+              type="text" 
+              value={folio}
+              onChange={(e) => setFolio(e.target.value)}
+              placeholder="Escribe el Folio..."
+              className="bg-transparent text-white font-black outline-none w-full text-xs placeholder:text-gray-700"
+            />
+          </div>
         </div>
         <div className="flex gap-3 w-full md:w-auto">
           <button onClick={() => setShowScanner(true)} className="flex-1 md:flex-none bg-white/5 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-all flex items-center justify-center gap-2 font-black text-[10px] uppercase"><Camera size={18}/> Escanear</button>
-          <button onClick={saveReceipt} disabled={loading} className="flex-1 md:flex-none bg-green-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-green-900/20 active:scale-95 transition-all">{loading ? 'Guardando...' : 'Finalizar Recibo'}</button>
+          <button 
+            onClick={saveReceipt} 
+            disabled={loading} 
+            className="flex-1 md:flex-none bg-green-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-green-900/20 active:scale-95 transition-all disabled:opacity-50"
+          >
+            {loading ? 'Procesando...' : 'Finalizar Recibo'}
+          </button>
         </div>
       </div>
 
