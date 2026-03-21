@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { BarChart3, ShoppingCart, TrendingUp, Package, Calendar, ChevronRight, ArrowLeft, Hash } from 'lucide-react';
+import { BarChart3, ShoppingCart, TrendingUp, Package, Calendar, ChevronRight, ArrowLeft, Hash, Truck } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -18,7 +18,6 @@ export default function Dashboard() {
 
   const fetchMetrics = async () => {
     setLoading(true);
-    // Traemos los proveedores y sumamos sus compras
     const { data: proveedores } = await supabase.from('proveedores').select('id, nombre');
     const { data: compras } = await supabase.from('compras').select('*');
 
@@ -104,7 +103,6 @@ export default function Dashboard() {
 
   return (
     <div className="animate-in fade-in duration-700">
-      {/* HEADER DE MÉTRICAS */}
       <div className="bg-[#0A0A0A] border border-white/5 rounded-[50px] p-10 mb-10 flex flex-col md:flex-row justify-between items-center gap-8">
         <div>
           <h2 className="text-4xl font-black italic uppercase tracking-tighter flex items-center gap-3">
@@ -113,8 +111,18 @@ export default function Dashboard() {
           <p className="text-[9px] text-gray-500 font-black tracking-[0.4em] uppercase mt-2">Auditoría en Tiempo Real</p>
         </div>
         <div className="flex bg-black p-2 rounded-3xl border border-white/5 gap-2">
-           <button onClick={() => setTab('compras')} className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'compras' ? 'bg-white text-black' : 'text-gray-500'}}>🛒 Compras</button>
-           <button onClick={() => setTab('rentabilidad')} className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'rentabilidad' ? 'bg-green-600 text-white shadow-lg shadow-green-900/20' : 'text-gray-500'}}>📈 Utilidad</button>
+           <button 
+             onClick={() => setTab('compras')} 
+             className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'compras' ? 'bg-white text-black' : 'text-gray-500'}}
+           >
+             🛒 Compras
+           </button>
+           <button 
+             onClick={() => setTab('rentabilidad')} 
+             className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'rentabilidad' ? 'bg-green-600 text-white shadow-lg shadow-green-900/20' : 'text-gray-500'}}
+           >
+             📈 Utilidad
+           </button>
         </div>
       </div>
 
