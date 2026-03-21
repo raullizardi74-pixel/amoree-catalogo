@@ -113,13 +113,13 @@ export default function Dashboard() {
         <div className="flex bg-black p-2 rounded-3xl border border-white/5 gap-2">
            <button 
              onClick={() => setTab('compras')} 
-             className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'compras' ? 'bg-white text-black' : 'text-gray-500'}}
+             className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'compras' ? 'bg-white text-black' : 'text-gray-500'}`}
            >
              🛒 Compras
            </button>
            <button 
              onClick={() => setTab('rentabilidad')} 
-             className={px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'rentabilidad' ? 'bg-green-600 text-white shadow-lg shadow-green-900/20' : 'text-gray-500'}}
+             className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase transition-all ${tab === 'rentabilidad' ? 'bg-green-600 text-white shadow-lg shadow-green-900/20' : 'text-gray-500'}`}
            >
              📈 Utilidad
            </button>
