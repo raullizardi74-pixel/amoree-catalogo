@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { Zap, Target, Minus, Plus, ChevronDown, Clock, Search, X, TrendingUp, Eye, EyeOff } from 'lucide-react';
+import { Zap, ChevronDown, Search, Eye, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 
 const OBJETIVOS_UTILIDAD: Record<string, number> = { 'Frutas': 0.40, 'Verduras': 0.30, 'Hojas y tallos': 0.42, 'Abarrotes': 0.30, 'Cremería': 0.22, 'Otros': 0.15 };
@@ -37,11 +37,20 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
       const dias = prom > 0 ? p.stock_actual / prom : 99;
       const sug = Math.max(0, (prom * coverageDays) - p.stock_actual);
       
-      // ✅ Lógica de Urgencia Unificada
-      let urg = 3;
-      if (p.stock_actual <= 0) urg = 0; // Rojo
-      else if (p.stock_actual <= 5) urg = 1; // Naranja
-      else if (dias < 1.5) urg = 2; // Amarillo
+      // ✅ PUNTO 6: SEMÁFORO SENSIBLE A UNIDAD (KG vs PZA)
+      let urg = 3; // Verde
+      if (p.stock_actual <= 0) {
+        urg = 0; // Rojo
+      } else {
+        const esKilo = p.unidad?.toLowerCase().includes('kg');
+        const umbralNaranja = esKilo ? 1.5 : 5; // Kg alerta en 1.5, Pza alerta en 5
+        
+        if (p.stock_actual <= umbralNaranja) {
+          urg = 1; // Naranja
+        } else if (dias < 1.5) {
+          urg = 2; // Amarillo
+        }
+      }
       
       return { ...p, sug: Number(sug.toFixed(1)), urg, dias, mgn: OBJETIVOS_UTILIDAD[p.categoria] || 0.15 };
     });
@@ -50,7 +59,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const categoriesOrdered = useMemo(() => {
     const cats = Array.from(new Set(analysis.map(p => p.categoria || 'Otros')));
     return cats.sort((a, b) => {
-      // ✅ SEMÁFORO UNIFICADO: Ignora inactivos y busca el peor caso activo
       const itemsA = analysis.filter(p => p.categoria === a && p.activo !== false);
       const itemsB = analysis.filter(p => p.categoria === b && p.activo !== false);
       const minA = itemsA.length > 0 ? Math.min(...itemsA.map(p => p.urg)) : 3;
@@ -76,18 +84,15 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   const ejecutarCompraMaestra = async () => {
     const items = Object.entries(registroCompra).filter(([_, val]) => val.cantidad > 0);
-    if (items.length === 0) return alert("Socio, no hay compras marcadas.");
-    if (items.some(([_, d]) => (d.cost || 0) <= 0)) return alert("⚠️ Error: Costos en $0 detectados.");
-    
+    if (items.length === 0) return alert("Socio, no hay compras.");
     setIsSubmitting(true);
     try {
       const tot = items.reduce((a, [_, d]) => a + (d.cantidad * d.cost), 0);
       const { data: h } = await supabase.from('compras').insert({ proveedor_id: 1, folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`, total: tot }).select().single();
       for (const [sku, d] of items) {
         const p = products.find(x => x.sku === sku);
-        const sBase = Math.max(0, p.stock_actual || 0);
-        const sTot = sBase + d.cantidad;
-        const cProm = ((sBase * (p.costo || 0)) + (d.cantidad * d.cost)) / sTot;
+        const sTot = (Math.max(0, p.stock_actual || 0)) + d.cantidad;
+        const cProm = (((Math.max(0, p.stock_actual || 0)) * (p.costo || 0)) + (d.cantidad * d.cost)) / sTot;
         await supabase.from('compras_detalle').insert({ compra_id: h.id, nombre: p.nombre, cantidad: d.cantidad, costo_unitario: d.cost, subtotal: d.cantidad * d.cost });
         await supabase.from('productos').update({ costo: Number(cProm.toFixed(2)), precio_venta: d.prev, stock_actual: sTot }).eq('sku', sku);
       }
@@ -97,13 +102,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden">
-      <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black">
+      <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black shadow-xl">
         <button onClick={onBack} className="p-2 bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest">Atrás</button>
-        <div className="text-center"><h2 className="text-xs font-black uppercase italic tracking-tighter">Hugo <span className="text-green-500">Master</span></h2></div>
+        <div className="text-center"><h2 className="text-xs font-black uppercase italic tracking-tighter">Hugo <span className="text-green-500">Master</span></h2><p className="text-[7px] text-gray-500 font-bold tracking-widest uppercase">Inteligencia de Abasto</p></div>
         <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-black font-black text-[10px]">🛒</div>
       </div>
       <div className="p-3 bg-[#050505] border-b border-white/10 flex items-center gap-3">
-        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14}/><input type="text" placeholder="BUSCAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-3 pl-10 pr-4 text-[10px] font-bold text-green-500 outline-none"/></div>
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14}/><input type="text" placeholder="BUSCAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-3 pl-10 pr-4 text-[10px] font-bold text-green-500 outline-none uppercase"/></div>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
         {categoriesOrdered.map(cat => {
@@ -114,26 +119,28 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           if (items.length === 0) return null;
 
           return (
-            <div key={cat} className={`rounded-[30px] border transition-all ${expandedCategory === cat ? 'bg-[#080808] border-white/10' : 'border-white/5 opacity-80'}`}>
+            <div key={cat} className={`rounded-[30px] border transition-all ${expandedCategory === cat ? 'bg-[#080808] border-white/10 shadow-2xl' : 'border-white/5 opacity-80'}`}>
               <button onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)} className="w-full p-5 flex items-center justify-between">
                 <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${colorCat} ${minUrg <= 1 && 'animate-pulse'}`}></div><h3 className="text-[10px] font-black uppercase tracking-widest">{cat} ({itemsActivos.length} Activos)</h3></div>
-                <ChevronDown size={14} className={expandedCategory === cat ? 'rotate-180' : ''}/>
+                <ChevronDown size={14} className={`text-gray-600 transition-transform ${expandedCategory === cat ? 'rotate-180' : ''}`}/>
               </button>
               {expandedCategory === cat && (
                 <div className="px-3 pb-6 space-y-4">
                   {items.map(item => {
                     const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: item.mgn };
-                    const esBajo = item.stock_actual <= 5;
+                    const esKilo = item.unidad?.toLowerCase().includes('kg');
+                    const umbralNaranja = esKilo ? 1.5 : 5;
+                    const esBajo = item.stock_actual <= umbralNaranja;
                     const cardColor = item.stock_actual <= 0 ? 'border-red-600/40 bg-red-600/[0.04]' : esBajo ? 'border-orange-500/40 bg-orange-500/[0.04]' : 'border-white/5 bg-white/[0.02]';
                     return (
-                      <div key={item.sku} className={`p-5 rounded-[28px] border ${cardColor} ${item.activo === false && 'opacity-30 grayscale'}`}>
+                      <div key={item.sku} className={`p-5 rounded-[28px] border transition-all ${cardColor} ${item.activo === false && 'opacity-30 grayscale'}`}>
                         <div className="flex justify-between items-start mb-4">
-                          <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase text-white leading-tight">{item.nombre}</p><button onClick={() => toggleActivo(item.sku, item.activo)}>{item.activo !== false ? <Eye size={10} className="text-green-500"/> : <EyeOff size={10} className="text-red-500"/>}</button></div>
-                          <div className={`px-2 py-1 rounded text-[9px] font-black uppercase ${item.stock_actual <= 0 ? 'bg-red-600' : 'bg-green-500/20 text-green-500'}`}>{item.stock_actual} {item.unidad}</div>
+                          <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase text-white leading-tight">{item.nombre}</p><button onClick={() => toggleActivo(item.sku, item.activo)} className="p-1">{item.activo !== false ? <Eye size={10} className="text-green-500"/> : <EyeOff size={10} className="text-red-500"/>}</button></div>
+                          <div className={`px-2 py-1 rounded text-[9px] font-black uppercase ${item.stock_actual <= 0 ? 'bg-red-600 text-white' : esBajo ? 'bg-orange-500 text-black' : 'bg-green-500/20 text-green-500 border border-green-500/30'}`}>{item.stock_actual} {item.unidad}</div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
-                          <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-green-500 outline-none" placeholder={`Sug: ${item.sug}`}/>
-                          <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-white outline-none"/>
+                          <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-green-500 outline-none focus:border-green-500" placeholder={`Sug: ${item.sug}`}/>
+                          <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-white outline-none focus:border-white/20"/>
                         </div>
                       </div>
                     );
@@ -144,7 +151,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           );
         })}
       </div>
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10"><button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[24px] text-black font-black uppercase text-xs">{issubmitting ? 'Sincronizando...' : 'Finalizar Operación'}</button></div>
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 shadow-[0_-20px_60px_rgba(0,0,0,1)] z-[100]"><button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[24px] text-black font-black uppercase text-xs tracking-widest active:scale-95 transition-all shadow-xl shadow-green-900/20">{issubmitting ? 'Sincronizando...' : 'Finalizar Sincronización'}</button></div>
     </div>
   );
 }
