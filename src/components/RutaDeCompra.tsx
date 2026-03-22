@@ -1,17 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { 
-  Zap, Target, Minus, Plus, ChevronDown, 
-  Clock, Save, EyeOff, Eye, Search, X, TrendingUp 
-} from 'lucide-react';
+import { Zap, Target, Minus, Plus, ChevronDown, Clock, Search, X, TrendingUp, Eye, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 
-const OBJETIVOS_UTILIDAD: Record<string, number> = {
-  'Frutas': 0.40, 'Verduras': 0.30, 'Hojas y tallos': 0.42, 
-  'Abarrotes': 0.30, 'Cremería': 0.22, 'Otros': 0.15
-};
-
+const OBJETIVOS_UTILIDAD: Record<string, number> = { 'Frutas': 0.40, 'Verduras': 0.30, 'Hojas y tallos': 0.42, 'Abarrotes': 0.30, 'Cremería': 0.22, 'Otros': 0.15 };
 const redondearPrecio = (precio: number) => Math.round(precio * 2) / 2;
 
 export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
@@ -29,242 +22,118 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data: prodData } = await supabase.from('productos').select('*');
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      
-      const { data: orderData } = await supabase
-        .from('pedidos')
-        .select('detalle_pedido')
-        .eq('estado', 'Finalizado')
-        .gte('created_at', sevenDaysAgo.toISOString());
-        
-      if (prodData) setProducts(prodData);
-      if (orderData) setSalesData(orderData);
+      const { data: p } = await supabase.from('productos').select('*');
+      const { data: o } = await supabase.from('pedidos').select('detalle_pedido').eq('estado', 'Finalizado').gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString());
+      if (p) setProducts(p);
+      if (o) setSalesData(o);
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
   const analysis = useMemo(() => {
-    let rawData = products.map(p => {
-      let totalVendido = 0;
-      salesData.forEach(order => {
-        const item = order.detalle_pedido?.find((i: any) => (i.sku || i.SKU) === p.sku);
-        if (item) totalVendido += (item.quantity || 0);
-      });
-      const promedioDiario = totalVendido / 7;
-      const diasRestantes = promedioDiario > 0 ? p.stock_actual / promedioDiario : 99;
-      const sugerido = Math.max(0, (promedioDiario * coverageDays) - p.stock_actual);
-
-      let urgencia = 3;
-      if (p.stock_actual <= 0) urgencia = 0;
-      else if (p.stock_actual <= 5) urgencia = 1;
-      else if (diasRestantes < 1.5) urgencia = 2;
-
-      return { 
-        ...p, promedioDiario, diasRestantes, sugerido: Number(sugerido.toFixed(1)), 
-        urgencia, margenObjetivo: OBJETIVOS_UTILIDAD[p.categoria] || 0.15 
-      };
+    return products.map(p => {
+      let v = 0;
+      salesData.forEach(o => { const i = o.detalle_pedido?.find((x: any) => (x.sku || x.SKU) === p.sku); if (i) v += (i.quantity || 0); });
+      const prom = v / 7;
+      const dias = prom > 0 ? p.stock_actual / prom : 99;
+      const sug = Math.max(0, (prom * coverageDays) - p.stock_actual);
+      
+      // ✅ Lógica de Urgencia Unificada
+      let urg = 3;
+      if (p.stock_actual <= 0) urg = 0; // Rojo
+      else if (p.stock_actual <= 5) urg = 1; // Naranja
+      else if (dias < 1.5) urg = 2; // Amarillo
+      
+      return { ...p, sug: Number(sug.toFixed(1)), urg, dias, mgn: OBJETIVOS_UTILIDAD[p.categoria] || 0.15 };
     });
-
-    if (searchTerm) {
-      rawData = rawData.filter(p => p.nombre.toLowerCase().includes(searchTerm.toLowerCase()));
-    }
-
-    return rawData.sort((a, b) => a.urgencia - b.urgencia || a.stock_actual - b.stock_actual);
-  }, [products, salesData, coverageDays, searchTerm]);
+  }, [products, salesData, coverageDays]);
 
   const categoriesOrdered = useMemo(() => {
     const cats = Array.from(new Set(analysis.map(p => p.categoria || 'Otros')));
     return cats.sort((a, b) => {
-      // ✅ PUNTO 6: Semáforo ignora productos inactivos
+      // ✅ SEMÁFORO UNIFICADO: Ignora inactivos y busca el peor caso activo
       const itemsA = analysis.filter(p => p.categoria === a && p.activo !== false);
       const itemsB = analysis.filter(p => p.categoria === b && p.activo !== false);
-      
-      const minUrgA = itemsA.length > 0 ? Math.min(...itemsA.map(p => p.urgencia)) : 3;
-      const minUrgB = itemsB.length > 0 ? Math.min(...itemsB.map(p => p.urgencia)) : 3;
-      
-      return minUrgA - minUrgB;
+      const minA = itemsA.length > 0 ? Math.min(...itemsA.map(p => p.urg)) : 3;
+      const minB = itemsB.length > 0 ? Math.min(...itemsB.map(p => p.urg)) : 3;
+      return minA - minB;
     });
   }, [analysis]);
 
-  const toggleActivo = async (sku: string, estadoActual: any) => {
-    const nuevoEstado = !(estadoActual === false ? false : true);
-    try {
-      await supabase.from('productos').update({ activo: nuevoEstado }).eq('sku', sku);
-      setProducts(prev => prev.map(p => p.sku === sku ? { ...p, activo: nuevoEstado } : p));
-    } catch (e) { console.error(e); }
-  };
-
   const updateRegistro = (sku: string, field: string, value: any, itemRef?: any) => {
     setRegistroCompra(prev => {
-      const current = prev[sku] || { 
-        cantidad: 0, costo_central: itemRef?.costo || 0, 
-        precio_venta: itemRef?.precio_venta || 0, margen_actual: itemRef?.margenObjetivo || 0.15
-      };
-      let updated = { ...current, [field]: value };
-      if (field === 'costo_central' || field === 'margen_actual') {
-        updated.precio_venta = redondearPrecio(updated.costo_central * (1 + updated.margen_actual));
-      }
-      return { ...prev, [sku]: updated };
+      const cur = prev[sku] || { cantidad: 0, cost: itemRef?.costo || 0, prev: itemRef?.precio_venta || 0, mgn: itemRef?.mgn || 0.15 };
+      let upd = { ...cur, [field]: value };
+      if (field === 'cost' || field === 'mgn') upd.prev = redondearPrecio(upd.cost * (1 + upd.mgn));
+      return { ...prev, [sku]: upd };
     });
   };
 
+  const toggleActivo = async (sku: string, act: any) => {
+    const n = !(act === false ? false : true);
+    await supabase.from('productos').update({ activo: n }).eq('sku', sku);
+    setProducts(prev => prev.map(p => p.sku === sku ? { ...p, activo: n } : p));
+  };
+
   const ejecutarCompraMaestra = async () => {
-    const itemsAComprar = Object.entries(registroCompra).filter(([_, val]) => val.cantidad > 0);
-    if (itemsAComprar.length === 0) return alert("Socio, no hay productos marcados para comprar.");
-
-    // ✅ PUNTO 2: Bloqueo Total si el costo es $0
-    const productosSinCosto = itemsAComprar.filter(([_, data]) => (data.costo_central || 0) <= 0);
-    if (productosSinCosto.length > 0) {
-      const errorNames = productosSinCosto.map(([sku]) => products.find(p => p.sku === sku)?.nombre).join(', ');
-      return alert(`⚠️ ERROR DE INTEGRIDAD:\nLos siguientes productos tienen costo $0:\n[${errorNames}]\n\nHugo, el sistema no permite costos en $0 para proteger tus métricas.`);
-    }
-
-    const pendientes = analysis.filter(p => p.activo !== false && p.urgencia <= 1 && (!registroCompra[p.sku] || registroCompra[p.sku].cantidad === 0));
-    if (pendientes.length > 0) {
-      const nombres = pendientes.slice(0, 5).map(p => `- ${p.nombre}`).join('\n');
-      const msg = `⚠️ ATENCIÓN HUGO:\nFaltan ${pendientes.length} AGOTADOS/CRÍTICOS:\n${nombres}\n\n¿Finalizar de todos modos?`;
-      if (!window.confirm(msg)) return;
-    }
-
+    const items = Object.entries(registroCompra).filter(([_, val]) => val.cantidad > 0);
+    if (items.length === 0) return alert("Socio, no hay compras marcadas.");
+    if (items.some(([_, d]) => (d.cost || 0) <= 0)) return alert("⚠️ Error: Costos en $0 detectados.");
+    
     setIsSubmitting(true);
     try {
-      const totalRuta = itemsAComprar.reduce((acc, [_, data]) => acc + (data.cantidad * data.costo_central), 0);
-
-      const { data: compH, error: errH } = await supabase
-        .from('compras')
-        .insert({
-          proveedor_id: 1, 
-          folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`,
-          total: totalRuta
-        })
-        .select().single();
-
-      if (errH) throw errH;
-
-      for (const [sku, data] of itemsAComprar) {
-        const prod = products.find(p => p.sku === sku);
-        
-        // ✅ PUNTO 5: Lógica de Costo Promedio Ponderado
-        // Fórmula: ((Stock Actual * Costo Anterior) + (Nueva Cantidad * Nuevo Costo)) / (Stock Total)
-        const stockBase = Math.max(0, prod.stock_actual || 0); // Si es negativo, usamos 0
-        const stockTotal = stockBase + data.cantidad;
-        const costoAnterior = prod.costo || 0;
-        
-        const costoPromedio = ((stockBase * costoAnterior) + (data.cantidad * data.costo_central)) / stockTotal;
-
-        await supabase.from('compras_detalle').insert({
-          compra_id: compH.id,
-          nombre: prod.nombre,
-          cantidad: data.cantidad,
-          costo_unitario: data.costo_central,
-          subtotal: data.cantidad * data.costo_central
-        });
-
-        await supabase.from('productos').update({
-          costo: Number(costoPromedio.toFixed(2)),
-          precio_venta: data.precio_venta,
-          stock_actual: stockTotal
-        }).eq('sku', sku);
+      const tot = items.reduce((a, [_, d]) => a + (d.cantidad * d.cost), 0);
+      const { data: h } = await supabase.from('compras').insert({ proveedor_id: 1, folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`, total: tot }).select().single();
+      for (const [sku, d] of items) {
+        const p = products.find(x => x.sku === sku);
+        const sBase = Math.max(0, p.stock_actual || 0);
+        const sTot = sBase + d.cantidad;
+        const cProm = ((sBase * (p.costo || 0)) + (d.cantidad * d.cost)) / sTot;
+        await supabase.from('compras_detalle').insert({ compra_id: h.id, nombre: p.nombre, cantidad: d.cantidad, costo_unitario: d.cost, subtotal: d.cantidad * d.cost });
+        await supabase.from('productos').update({ costo: Number(cProm.toFixed(2)), precio_venta: d.prev, stock_actual: sTot }).eq('sku', sku);
       }
-
-      alert("✅ ¡Sincronizado! Se calculó el Costo Promedio y se actualizó el stock.");
-      onBack();
-    } catch (e) { 
-      console.error(e);
-      alert("Error en la sincronización."); 
-    } finally { setIsSubmitting(false); }
+      alert("✅ Sincronizado."); onBack();
+    } catch (e) { console.error(e); } finally { setIsSubmitting(false); }
   };
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden">
-      {/* HEADER */}
       <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black">
         <button onClick={onBack} className="p-2 bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest">Atrás</button>
-        <div className="text-center">
-          <h2 className="text-xs font-black uppercase italic tracking-tighter">Hugo <span className="text-green-500">Master</span></h2>
-          <p className="text-[7px] text-gray-500 font-bold tracking-widest uppercase">Central de Abastos OS</p>
-        </div>
+        <div className="text-center"><h2 className="text-xs font-black uppercase italic tracking-tighter">Hugo <span className="text-green-500">Master</span></h2></div>
         <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-black font-black text-[10px]">🛒</div>
       </div>
-
-      {/* SEARCH & COBERTURA */}
-      <div className="p-3 bg-[#050505] border-b border-white/10 space-y-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
-          <input 
-            type="text" placeholder="BUSCAR ARTÍCULO..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-black border border-white/10 rounded-2xl py-3 pl-10 pr-4 text-[10px] font-bold text-green-500 uppercase outline-none focus:border-green-500/30"
-          />
-        </div>
-        <div className="flex items-center justify-between px-2">
-          <div className="flex items-center gap-2">
-             <Clock size={12} className="text-gray-500" />
-             <p className="text-[8px] font-black uppercase text-gray-400">Cobertura:</p>
-          </div>
-          <div className="flex bg-black p-1 rounded-xl border border-white/5">
-            {[2, 3, 5, 7].map(d => (
-              <button key={d} onClick={() => setCoverageDays(d)} className={`px-4 py-1.5 rounded-lg text-[9px] font-black transition-all ${coverageDays === d ? 'bg-white text-black' : 'text-gray-500'}`}>{d}D</button>
-            ))}
-          </div>
-        </div>
+      <div className="p-3 bg-[#050505] border-b border-white/10 flex items-center gap-3">
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14}/><input type="text" placeholder="BUSCAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-3 pl-10 pr-4 text-[10px] font-bold text-green-500 outline-none"/></div>
       </div>
-
-      {/* LISTADO CON SEMÁFORO INTELIGENTE */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
         {categoriesOrdered.map(cat => {
-          const items = analysis.filter(p => (p.categoria || 'Otros') === cat);
-          // ✅ SEMÁFORO: Solo considera artículos activos
+          const items = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
           const itemsActivos = items.filter(i => i.activo !== false);
-          const minUrg = itemsActivos.length > 0 ? Math.min(...itemsActivos.map(i => i.urgencia)) : 3;
-          
-          const colorCat = minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : 'bg-green-500';
-          const isExpanded = expandedCategory === cat || searchTerm.length > 0;
+          const minUrg = itemsActivos.length > 0 ? Math.min(...itemsActivos.map(i => i.urg)) : 3;
+          const colorCat = minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : minUrg === 2 ? 'bg-yellow-500' : 'bg-green-500';
+          if (items.length === 0) return null;
 
           return (
-            <div key={cat} className={`rounded-[30px] border transition-all ${isExpanded ? 'bg-[#080808] border-white/10' : 'border-white/5 opacity-80'}`}>
+            <div key={cat} className={`rounded-[30px] border transition-all ${expandedCategory === cat ? 'bg-[#080808] border-white/10' : 'border-white/5 opacity-80'}`}>
               <button onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)} className="w-full p-5 flex items-center justify-between">
-                <div className="flex items-center gap-3 text-left">
-                  <div className={`w-2 h-2 rounded-full ${colorCat} ${minUrg === 0 && 'animate-ping'}`}></div>
-                  <h3 className="text-[10px] font-black uppercase tracking-widest">{cat} ({itemsActivos.length} Activos)</h3>
-                </div>
-                <ChevronDown size={14} className={`text-gray-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${colorCat} ${minUrg <= 1 && 'animate-pulse'}`}></div><h3 className="text-[10px] font-black uppercase tracking-widest">{cat} ({itemsActivos.length} Activos)</h3></div>
+                <ChevronDown size={14} className={expandedCategory === cat ? 'rotate-180' : ''}/>
               </button>
-
-              {isExpanded && (
+              {expandedCategory === cat && (
                 <div className="px-3 pb-6 space-y-4">
                   {items.map(item => {
-                    const data = registroCompra[item.sku] || { cantidad: 0, costo_central: item.costo, precio_venta: item.precio_venta, margen_actual: item.margenObjetivo };
+                    const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: item.mgn };
+                    const esBajo = item.stock_actual <= 5;
+                    const cardColor = item.stock_actual <= 0 ? 'border-red-600/40 bg-red-600/[0.04]' : esBajo ? 'border-orange-500/40 bg-orange-500/[0.04]' : 'border-white/5 bg-white/[0.02]';
                     return (
-                      <div key={item.sku} className={`p-5 rounded-[28px] border bg-white/[0.02] border-white/5 ${item.activo === false && 'opacity-30 grayscale'}`}>
+                      <div key={item.sku} className={`p-5 rounded-[28px] border ${cardColor} ${item.activo === false && 'opacity-30 grayscale'}`}>
                         <div className="flex justify-between items-start mb-4">
-                          <div className="w-3/4">
-                            <div className="flex items-center gap-2 mb-1">
-                               <p className="text-[11px] font-black uppercase text-white leading-tight">{item.nombre}</p>
-                               <button onClick={() => toggleActivo(item.sku, item.activo)} className="p-1">
-                                  {item.activo !== false ? <Eye size={10} className="text-green-500"/> : <EyeOff size={10} className="text-red-500"/>}
-                               </button>
-                            </div>
-                            <p className="text-[7px] text-gray-500 font-bold uppercase">Costo Actual: {formatCurrency(item.costo)}</p>
-                          </div>
-                          <div className="text-right">
-                            <div className={`px-2 py-1 rounded text-[9px] font-black uppercase ${item.stock_actual <= 0 ? 'bg-red-600' : 'bg-green-500/20 text-green-500'}`}>
-                              {item.stock_actual} {item.unidad}
-                            </div>
-                          </div>
+                          <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase text-white leading-tight">{item.nombre}</p><button onClick={() => toggleActivo(item.sku, item.activo)}>{item.activo !== false ? <Eye size={10} className="text-green-500"/> : <EyeOff size={10} className="text-red-500"/>}</button></div>
+                          <div className={`px-2 py-1 rounded text-[9px] font-black uppercase ${item.stock_actual <= 0 ? 'bg-red-600' : 'bg-green-500/20 text-green-500'}`}>{item.stock_actual} {item.unidad}</div>
                         </div>
-
                         <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-[7px] text-gray-500 uppercase ml-2 block mb-1">Cantidad</label>
-                            <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', parseFloat(e.target.value), item)}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-green-500 outline-none" placeholder={item.sugerido} />
-                          </div>
-                          <div>
-                            <label className="text-[7px] text-gray-500 uppercase ml-2 block mb-1">Costo Ruta</label>
-                            <input type="number" value={data.costo_central} onChange={(e) => updateRegistro(item.sku, 'costo_central', parseFloat(e.target.value), item)}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-white outline-none" />
-                          </div>
+                          <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-green-500 outline-none" placeholder={`Sug: ${item.sug}`}/>
+                          <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', parseFloat(e.target.value), item)} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xl font-black text-white outline-none"/>
                         </div>
                       </div>
                     );
@@ -275,21 +144,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           );
         })}
       </div>
-
-      {/* FOOTER TOTALIZADOR */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10">
-        <div className="flex justify-between items-center mb-4 px-2">
-            <div>
-               <p className="text-[8px] font-black text-gray-500 uppercase">Inversión Estimada</p>
-               <p className="text-2xl font-black text-white">{formatCurrency(Object.values(registroCompra).reduce((acc, curr) => acc + (curr.cantidad * (curr.costo_central || 0)), 0))}</p>
-            </div>
-            <p className="text-lg font-black text-green-500">{Object.values(registroCompra).filter(v => v.cantidad > 0).length} ITEMS</p>
-        </div>
-        <button onClick={ejecutarCompraMaestra} disabled={issubmitting}
-          className="w-full bg-green-600 h-16 rounded-[24px] text-black font-black uppercase text-xs active:scale-95 transition-all shadow-xl shadow-green-900/20">
-          {issubmitting ? 'Sincronizando...' : 'Finalizar Sincronización'}
-        </button>
-      </div>
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10"><button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[24px] text-black font-black uppercase text-xs">{issubmitting ? 'Sincronizando...' : 'Finalizar Operación'}</button></div>
     </div>
   );
 }
