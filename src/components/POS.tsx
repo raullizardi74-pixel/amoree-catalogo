@@ -104,7 +104,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
         metodo_pago: metodoPago,
         pago_confirmado: metodoPago !== 'A Cuenta',
         vendedor: 'Terminal POS',
-        origen: 'POS',
+        origen: 'Mostrador', // 👈 CAMBIO CLAVE: Antes decía 'POS', ahora dice 'Mostrador' para que AdminOrders lo reconozca.
         detalle_pedido: cart.map(item => ({
           id: item.id,
           sku: item.sku,
@@ -113,6 +113,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
           price: item.precio_venta
         }))
       }]);
+// ...
 
       if (errPedido) throw errPedido;
 
