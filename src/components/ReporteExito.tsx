@@ -1,250 +1,240 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
 import { 
-  startOfDay, endOfDay, subDays, format, parseISO 
-} from 'date-fns';
-import { 
-  TrendingDown, TrendingUp, Copy, CheckCircle2, Download, Calendar, ChevronDown, Star
+  TrendingUp, TrendingDown, DollarSign, Trash2, 
+  ArrowLeft, Calendar, AlertCircle, ShoppingBag, 
+  PieChart, ArrowRight, Zap
 } from 'lucide-react';
 
-const OBJETIVOS_UTILIDAD: Record<string, number> = {
-  'Frutas': 0.40, 'Verduras': 0.30, 'Hojas y tallos': 0.42, 
-  'Abarrotes': 0.30, 'Cremería': 0.22, 'Otros': 0.15
-};
-
-const redondearPrecio = (precio: number) => Math.round(precio * 2) / 2;
-
 export default function ReporteExito({ onBack }: { onBack: () => void }) {
-  const [data, setData] = useState<any[]>([]);
+  const [pedidos, setPedidos] = useState<any[]>([]);
+  const [mermas, setMermas] = useState<any[]>([]);
+  const [productos, setProductos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
 
-  // --- ESTADOS DE CALENDARIO ---
-  const [rango, setRango] = useState<'hoy' | '7d' | '30d' | 'custom'>('hoy');
-  const [fechaInicio, setFechaInicio] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [fechaFin, setFechaFin] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [showFilters, setShowFilters] = useState(false);
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  useEffect(() => { fetchAnalisis(); }, [rango, fechaInicio, fechaFin]);
-
-  const fetchAnalisis = async () => {
+  const fetchData = async () => {
     setLoading(true);
-    const ahora = new Date();
-    let inicio: string, fin: string;
+    try {
+      // ✅ CALCULAR MARCO DE 24 HORAS EXACTAS
+      const hace24Horas = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    if (rango === 'hoy') {
-      inicio = startOfDay(ahora).toISOString();
-      fin = endOfDay(ahora).toISOString();
-    } else if (rango === '7d') {
-      inicio = startOfDay(subDays(ahora, 7)).toISOString();
-      fin = endOfDay(ahora).toISOString();
-    } else if (rango === '30d') {
-      inicio = startOfDay(subDays(ahora, 30)).toISOString();
-      fin = endOfDay(ahora).toISOString();
-    } else {
-      inicio = startOfDay(parseISO(fechaInicio)).toISOString();
-      fin = endOfDay(parseISO(fechaFin)).toISOString();
+      // 1. Traer Pedidos Finalizados
+      const { data: dataPedidos } = await supabase
+        .from('pedidos')
+        .select('*')
+        .eq('estado', 'Finalizado')
+        .gte('created_at', hace24Horas);
+
+      // 2. Traer Mermas del periodo
+      const { data: dataMermas } = await supabase
+        .from('merma')
+        .select('*')
+        .gte('created_at', hace24Horas);
+
+      // 3. Traer Productos (para obtener costos actuales y calcular utilidad)
+      const { data: dataProds } = await supabase.from('productos').select('id, sku, costo');
+
+      if (dataPedidos) setPedidos(dataPedidos);
+      if (dataMermas) setMermas(dataMermas);
+      if (dataProds) setProductos(dataProds);
+
+    } catch (e) {
+      console.error("Error en Auditoría:", e);
+    } finally {
+      setLoading(false);
     }
-
-    const { data: res } = await supabase
-      .from('vista_analisis_compras')
-      .select('*')
-      .gte('created_at', inicio)
-      .lte('created_at', fin)
-      .order('created_at', { ascending: false });
-    
-    if (res) setData(res);
-    setLoading(false);
   };
 
-  const inversionTotal = data.reduce((acc, curr) => acc + (curr.costo_hoy * curr.cantidad), 0);
-  const impactoNeto = data.reduce((acc, curr) => acc + curr.impacto_financiero_total, 0);
-
-  // --- GENERADOR DE PDF TITANIUM ---
-  const exportarPDF = () => {
-    const doc = new jsPDF();
-    const fechaReporte = rango === 'hoy' ? format(new Date(), 'dd/MM/yyyy') : `${fechaInicio} a ${fechaFin}`;
+  // 🧠 CEREBRO DE MÉTRICAS TITANIUM
+  const stats = useMemo(() => {
+    const ventasTotales = pedidos.reduce((acc, p) => acc + (p.total || 0), 0);
+    const perdidaPorMerma = mermas.reduce((acc, m) => acc + (m.total_perdida || 0), 0);
     
-    doc.setFontSize(22);
-    doc.setTextColor(0, 168, 107);
-    doc.text('AUTOMATIZA CON RAÚL', 14, 22);
-    
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`AUDITORÍA DE ÉXITO - PERIODO: ${fechaReporte}`, 14, 30);
-    doc.line(14, 32, 196, 32);
-
-    const tableRows = data.map(item => {
-      const margenObj = OBJETIVOS_UTILIDAD[item.categoria] || 0.15;
-      const sugerido = redondearPrecio(item.costo_hoy * (1 + margenObj));
-      // Si la venta real es 0, mostramos el sugerido en el PDF para evitar ceros confusos
-      const ventaAMostrar = (item.precio_venta_nuevo && item.precio_venta_nuevo > 0) 
-        ? item.precio_venta_nuevo 
-        : sugerido;
-
-      return [
-        item.nombre_producto,
-        item.costo_anterior === 0 ? '---' : formatCurrency(item.costo_anterior),
-        formatCurrency(item.costo_hoy),
-        item.costo_anterior === 0 ? 'NUEVO' : `${item.variacion_porcentual.toFixed(1)}%`,
-        formatCurrency(ventaAMostrar)
-      ];
+    // Calcular Costo de lo Vendido (COGS)
+    let costoTotalVendido = 0;
+    pedidos.forEach(p => {
+      const detalles = Array.isArray(p.detalle_pedido) ? p.detalle_pedido : [];
+      detalles.forEach((item: any) => {
+        const prod = productos.find(x => x.id === item.id || x.sku === item.sku);
+        const costoUnitario = prod?.costo || 0;
+        costoTotalVendido += (costoUnitario * (item.quantity || 0));
+      });
     });
 
-    (doc as any).autoTable({
-      startY: 40,
-      head: [['Producto', 'C. Anterior', 'C. Hoy', 'Var %', 'Venta Real*']],
-      body: tableRows,
-      headStyles: { fillColor: [0, 0, 0], fontSize: 9, fontStyle: 'bold' },
-      styles: { fontSize: 8 },
-      foot: [['', '', 'TOTAL ANALIZADO:', '', formatCurrency(inversionTotal)]],
-      footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
-    });
+    const utilidadBruta = ventasTotales - costoTotalVendido;
+    const utilidadNeta = utilidadBruta - perdidaPorMerma;
+    const margenReal = ventasTotales > 0 ? (utilidadNeta / ventasTotales) * 100 : 0;
 
-    doc.setFontSize(8);
-    doc.setTextColor(150);
-    doc.text('* Valores sugeridos por el sistema si no hubo captura manual.', 14, (doc as any).lastAutoTable.finalY + 10);
+    // Top 5 Productos más mermados
+    const topMermas = [...mermas]
+      .sort((a, b) => b.total_perdida - a.total_perdida)
+      .slice(0, 5);
 
-    doc.save(`Auditoria_Amoree_${format(new Date(), 'ddMMyy')}.pdf`);
-  };
+    return {
+      ventasTotales,
+      perdidaPorMerma,
+      costoTotalVendido,
+      utilidadNeta,
+      margenReal,
+      topMermas,
+      conteoPedidos: pedidos.length
+    };
+  }, [pedidos, mermas, productos]);
 
-  // --- GENERADOR DE TEXTO PARA NOTEBOOK LM ---
-  const generarTextoNotebook = () => {
-    let texto = `REPORTE DE AUDITORÍA ESTRATÉGICA - AMOREE\n`;
-    texto += `PERIODO: ${rango === 'hoy' ? format(new Date(), 'dd/MM/yyyy') : `${fechaInicio} - ${fechaFin}`}\n`;
-    texto += `INVERSIÓN TOTAL ANALIZADA: ${formatCurrency(inversionTotal)}\n`;
-    texto += `IMPACTO FINANCIERO: ${impactoNeto <= 0 ? 'AHORRO' : 'SOBRECOSTO'} DE ${formatCurrency(Math.abs(impactoNeto))}\n`;
-    texto += `--------------------------------------------------\n\n`;
-
-    data.forEach(item => {
-      const margenObj = OBJETIVOS_UTILIDAD[item.categoria] || 0.15;
-      const precioSugerido = redondearPrecio(item.costo_hoy * (1 + margenObj));
-      const precioReal = (item.precio_venta_nuevo && item.precio_venta_nuevo > 0) ? item.precio_venta_nuevo : precioSugerido;
-      const statusCosto = item.impacto_financiero_total <= 0 ? "AHORRO" : "SOBRECOSTO";
-
-      texto += `ARTÍCULO: ${item.nombre_producto}\n`;
-      texto += `  ESTADO: ${item.costo_anterior === 0 ? 'PRODUCTO NUEVO' : 'ACTIVO'}\n`;
-      texto += `  COSTO: Ant ${item.costo_anterior === 0 ? 'N/A' : formatCurrency(item.costo_anterior)} | Hoy ${formatCurrency(item.costo_hoy)} (${item.variacion_porcentual.toFixed(1)}%)\n`;
-      texto += `  VENTA: Real/Sugerida ${formatCurrency(precioReal)}\n`;
-      
-      if (item.precio_venta_nuevo > 0 && item.precio_venta_nuevo < precioSugerido) {
-        texto += `  ⚠️ ALERTA: Margen real por debajo del objetivo del ${(margenObj * 100)}%\n`;
-      }
-      texto += `\n`;
-    });
-
-    navigator.clipboard.writeText(texto);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  if (loading) return (
+    <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className="text-center">
+        <Zap className="text-green-500 animate-pulse mx-auto mb-4" size={48} />
+        <p className="text-green-500 font-black uppercase tracking-[0.3em] text-xs">Calculando Éxito Real...</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col text-white overflow-hidden font-sans">
-      
-      {/* HEADER */}
-      <div className="p-4 bg-[#050505] border-b border-white/10 flex justify-between items-center shadow-2xl relative z-20">
-        <button onClick={onBack} className="p-2 bg-white/5 rounded-xl text-[9px] font-black uppercase tracking-widest">Cerrar</button>
-        <div className="text-center">
-          <h2 className="text-xs font-black italic text-green-500 uppercase tracking-tighter">Auditoría Titanium</h2>
-          <button onClick={() => setShowFilters(!showFilters)} className="flex items-center gap-1 mx-auto mt-0.5 text-[8px] text-gray-500 font-bold uppercase tracking-widest">
-            <Calendar size={10}/> {rango} <ChevronDown size={10} className={showFilters ? 'rotate-180' : ''}/>
+    <div className="min-h-screen bg-black text-white p-4 lg:p-10 animate-in fade-in duration-700">
+      {/* HEADER ESTRATÉGICO */}
+      <div className="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-6">
+          <button onClick={onBack} className="bg-white/5 p-4 rounded-2xl hover:bg-white/10 transition-all">
+            <ArrowLeft size={24} />
           </button>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={exportarPDF} className="p-2.5 bg-white/5 rounded-xl text-gray-400"><Download size={16} /></button>
-          <button onClick={generarTextoNotebook} className="bg-green-600 p-2.5 rounded-xl flex items-center gap-2 active:scale-90 transition-all">
-            {copied ? <CheckCircle2 size={16} className="text-black"/> : <Copy size={16} className="text-black"/>}
-            <span className="text-black font-black text-[8px] uppercase">Copiar IA</span>
-          </button>
-        </div>
-      </div>
-
-      {/* FILTROS */}
-      {showFilters && (
-        <div className="bg-[#0A0A0A] border-b border-white/10 p-4 space-y-4 animate-in slide-in-from-top duration-300">
-          <div className="flex bg-black p-1 rounded-xl gap-1">
-            {['hoy', '7d', '30d', 'custom'].map(r => (
-              <button key={r} onClick={() => setRango(r as any)} className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${rango === r ? 'bg-white text-black' : 'text-gray-500'}`}>{r}</button>
-            ))}
+          <div>
+            <h2 className="text-4xl font-black uppercase italic tracking-tighter">
+              Auditoría de <span className="text-green-500">Éxito</span>
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              <Calendar size={14} className="text-gray-500" />
+              <p className="text-[10px] text-gray-500 font-black tracking-widest uppercase">Últimas 24 Horas de Operación</p>
+            </div>
           </div>
-          {rango === 'custom' && (
-            <div className="flex items-center gap-2">
-              <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="flex-1 bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] font-black text-green-500" />
-              <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="flex-1 bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] font-black text-green-500" />
-            </div>
-          )}
         </div>
-      )}
+        
+        <div className="bg-green-600/10 border border-green-500/20 p-4 rounded-3xl flex items-center gap-4">
+           <div className="text-right">
+             <p className="text-[8px] font-black text-gray-500 uppercase">Estatus de Caja</p>
+             <p className="text-sm font-black text-green-500 uppercase">Sincronizado</p>
+           </div>
+           <PieChart className="text-green-500" size={24} />
+        </div>
+      </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-24">
-        {loading ? (
-          <div className="h-full flex items-center justify-center text-[10px] font-black text-gray-500 uppercase animate-pulse">Analizando Registros...</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-[#0A0A0A] p-5 rounded-[30px] border border-white/5 shadow-xl">
-                  <p className="text-[8px] font-black text-gray-500 uppercase mb-2">Impacto Neto</p>
-                  <p className={`text-2xl font-black ${impactoNeto <= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {formatCurrency(Math.abs(impactoNeto))}
-                  </p>
-                  <p className="text-[7px] font-bold text-gray-600 mt-1 uppercase italic">{impactoNeto <= 0 ? 'Balance Positivo' : 'Efecto Inflación'}</p>
-              </div>
-              <div className="bg-[#0A0A0A] p-5 rounded-[30px] border border-white/5 flex flex-col justify-center text-right">
-                  <p className="text-[8px] font-black text-gray-500 uppercase mb-2">Sincronizados</p>
-                  <p className="text-2xl font-black text-white">{data.length}</p>
-                  <p className="text-[7px] font-bold text-gray-600 mt-1 uppercase italic">Items procesados</p>
-              </div>
-            </div>
+      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+        {/* CARD: VENTAS */}
+        <div className="bg-[#0A0A0A] border border-white/5 p-8 rounded-[40px] relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+            <ShoppingBag size={64} />
+          </div>
+          <p className="text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Ingresos Totales</p>
+          <h3 className="text-3xl font-black">{formatCurrency(stats.ventasTotales)}</h3>
+          <p className="text-[9px] text-green-500 font-bold mt-2 uppercase">{stats.conteoPedidos} Transacciones</p>
+        </div>
 
-            <div className="space-y-3">
-              {data.map((item, idx) => {
-                const esExito = item.impacto_financiero_total <= 0;
-                const margenObj = OBJETIVOS_UTILIDAD[item.categoria] || 0.15;
-                const precioSugerido = redondearPrecio(item.costo_hoy * (1 + margenObj));
-                const precioReal = (item.precio_venta_nuevo && item.precio_venta_nuevo > 0) ? item.precio_venta_nuevo : precioSugerido;
-                const esNuevo = item.costo_anterior === 0;
+        {/* CARD: COSTO OPERATIVO */}
+        <div className="bg-[#0A0A0A] border border-white/5 p-8 rounded-[40px]">
+          <p className="text-[10px] font-black text-gray-500 uppercase mb-2 tracking-widest">Inversión Vendida</p>
+          <h3 className="text-3xl font-black text-gray-300">{formatCurrency(stats.costoTotalVendido)}</h3>
+          <p className="text-[9px] text-gray-600 font-bold mt-2 uppercase">Costo Base de Mercancía</p>
+        </div>
 
-                return (
-                  <div key={idx} className={`p-5 rounded-[28px] border transition-all ${esExito ? 'bg-green-500/5 border-green-500/10' : 'bg-red-500/5 border-red-500/10'}`}>
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="w-2/3">
-                        <div className="flex items-center gap-2">
-                           <p className="text-[10px] font-black uppercase text-white truncate">{item.nombre_producto}</p>
-                           {esNuevo && <span className="bg-blue-600 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full uppercase">Nuevo</span>}
-                        </div>
-                        <p className="text-[8px] font-bold text-gray-500 uppercase mt-1">Venta: {formatCurrency(precioReal)}</p>
-                      </div>
-                      <div className="text-right">
-                        <div className={`flex items-center justify-end gap-1 font-black text-sm ${esExito ? 'text-green-500' : 'text-red-500'}`}>
-                          {esExito ? <TrendingDown size={14}/> : <TrendingUp size={14}/>}
-                          {esNuevo ? '---' : `${Math.abs(item.variacion_porcentual).toFixed(1)}%`}
-                        </div>
-                        <p className="text-[8px] font-bold text-white mt-1">
-                          {esNuevo ? formatCurrency(item.costo_hoy) : `${esExito ? '-' : '+'}${formatCurrency(Math.abs(item.impacto_financiero_total))}`}
-                        </p>
-                      </div>
-                    </div>
+        {/* CARD: FUGA POR MERMA (IMPACTO ROJO) */}
+        <div className="bg-[#0A0A0A] border border-red-500/20 p-8 rounded-[40px] relative overflow-hidden">
+          <div className="absolute inset-0 bg-red-600/[0.02] pointer-events-none" />
+          <p className="text-[10px] font-black text-red-500 uppercase mb-2 tracking-widest flex items-center gap-2">
+            <Trash2 size={12} /> Fuga por Merma
+          </p>
+          <h3 className="text-3xl font-black text-white">-{formatCurrency(stats.perdidaPorMerma)}</h3>
+          <p className="text-[9px] text-red-700 font-bold mt-2 uppercase">Dinero perdido en basura</p>
+        </div>
+
+        {/* CARD: UTILIDAD NETA (EL ÉXITO REAL) */}
+        <div className="bg-white text-black p-8 rounded-[40px] shadow-[0_20px_50px_rgba(255,255,255,0.1)]">
+          <p className="text-[10px] font-black opacity-50 uppercase mb-2 tracking-widest">Ganancia Neta Real</p>
+          <h3 className="text-4xl font-black italic tracking-tighter">{formatCurrency(stats.utilidadNeta)}</h3>
+          <div className="flex items-center gap-2 mt-2">
+            <TrendingUp size={14} className="text-green-600" />
+            <p className="text-[10px] font-bold uppercase">{stats.margenReal.toFixed(1)}% Margen Real</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* LISTADO DE MERMAS DEL DÍA */}
+        <div className="lg:col-span-2 bg-[#0A0A0A] border border-white/5 rounded-[50px] p-10">
+          <div className="flex justify-between items-center mb-8">
+            <h4 className="text-xl font-black uppercase italic tracking-tight">Top 5 <span className="text-red-500">Pérdidas</span></h4>
+            <AlertCircle className="text-gray-700" size={20} />
+          </div>
+
+          <div className="space-y-4">
+            {stats.topMermas.length > 0 ? stats.topMermas.map((m, idx) => (
+              <div key={idx} className="flex justify-between items-center p-6 bg-white/[0.02] border border-white/5 rounded-3xl group hover:border-red-500/30 transition-all">
+                <div className="flex items-center gap-5">
+                  <span className="text-gray-800 font-black italic text-2xl">{idx + 1}</span>
+                  <div>
+                    <p className="text-[10px] font-black text-gray-500 uppercase">{m.categoria}</p>
+                    <p className="text-sm font-black uppercase text-white">{m.nombre_producto}</p>
                   </div>
-                );
-              })}
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-black text-red-500">-{formatCurrency(m.total_perdida)}</p>
+                  <p className="text-[9px] text-gray-600 uppercase font-bold">{m.cantidad} {m.unidad} • {m.motivo}</p>
+                </div>
+              </div>
+            )) : (
+              <div className="py-20 text-center opacity-20">
+                <Trash2 className="mx-auto mb-4" size={48} />
+                <p className="text-xs font-black uppercase tracking-widest">Sin mermas registradas hoy</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ANALÍTICA RÁPIDA */}
+        <div className="bg-gradient-to-b from-[#0A0A0A] to-transparent border border-white/5 rounded-[50px] p-10 flex flex-col justify-between">
+          <div>
+            <h4 className="text-xl font-black uppercase italic tracking-tight mb-8">Resumen <span className="text-green-500">Estratégico</span></h4>
+            <div className="space-y-8">
+              <div>
+                <p className="text-[9px] font-black text-gray-500 uppercase mb-2 tracking-widest">Eficiencia de Inventario</p>
+                <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-green-500 transition-all duration-1000" 
+                    style={{ width: `${Math.max(0, 100 - (stats.perdidaPorMerma / (stats.ventasTotales || 1) * 100))}%` }} 
+                  />
+                </div>
+              </div>
+              
+              <div className="bg-white/5 p-6 rounded-3xl border border-white/5">
+                <p className="text-[9px] font-black text-gray-400 uppercase mb-3">Consejo Titanium</p>
+                <p className="text-xs text-gray-300 leading-relaxed">
+                  {stats.perdidaPorMerma > (stats.utilidadNeta * 0.2) 
+                    ? "⚠️ Hugo, la merma está devorando más del 20% de tu ganancia. Revisa el stock de perecederos antes de ir a la Central." 
+                    : "✅ Operación saludable. El nivel de desperdicio está bajo control respecto a las ventas."}
+                </p>
+              </div>
             </div>
-          </>
-        )}
-      </div>
+          </div>
 
-      <div className="p-6 bg-black border-t border-white/5 flex justify-between items-center shadow-[0_-20px_50px_rgba(0,0,0,1)]">
-        <div>
-          <p className="text-[9px] font-black text-gray-500 uppercase">Inversión Analizada</p>
-          <p className="text-xl font-black text-white leading-none">{formatCurrency(inversionTotal)}</p>
-        </div>
-        <div className="w-10 h-10 bg-green-600/10 border border-green-500/20 rounded-xl flex items-center justify-center text-green-500">
-           <Star size={18} fill="currentColor" />
+          <button 
+            onClick={fetchData}
+            className="w-full mt-10 py-5 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white/10 transition-all flex items-center justify-center gap-3"
+          >
+            <RefreshCw size={14} /> Actualizar Datos
+          </button>
         </div>
       </div>
-
     </div>
+  );
+}
+
+// Icono faltante de Refresh
+function RefreshCw({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
   );
 }
