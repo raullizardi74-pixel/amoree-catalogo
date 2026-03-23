@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import { 
   Zap, ChevronDown, Search, Eye, EyeOff, AlertTriangle, 
-  Calculator, ShoppingList, ClipboardList, CheckCircle2, X, ArrowRight, TrendingUp 
+  Calculator, ClipboardList, CheckCircle2, X, ArrowRight, TrendingUp 
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -19,7 +19,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const [issubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const [showChecklist, setShowChecklist] = useState(false); // ✅ Nueva Lista de Misión
+  const [showChecklist, setShowChecklist] = useState(false); 
   const [registroCompra, setRegistroCompra] = useState<Record<string, any>>({});
 
   useEffect(() => { fetchData(); }, []);
@@ -28,7 +28,11 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     setLoading(true);
     try {
       const { data: p } = await supabase.from('productos').select('*');
-      const { data: o } = await supabase.from('pedidos').select('detalle_pedido').eq('estado', 'Finalizado').gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString());
+      const { data: o } = await supabase.from('pedidos')
+        .select('detalle_pedido')
+        .eq('estado', 'Finalizado')
+        .gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString());
+      
       if (p) setProducts(p);
       if (o) setSalesData(o);
     } catch (e) { console.error(e); } finally { setLoading(false); }
@@ -37,16 +41,20 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const analysis = useMemo(() => {
     return products.map(p => {
       let v = 0;
-      salesData.forEach(o => { const i = o.detalle_pedido?.find((x: any) => (x.sku || x.SKU) === p.sku); if (i) v += (i.quantity || 0); });
+      salesData.forEach(o => { 
+        const items = Array.isArray(o.detalle_pedido) ? o.detalle_pedido : [];
+        const i = items.find((x: any) => (x.sku || x.SKU) === p.sku); 
+        if (i) v += (Number(i.quantity) || 0); 
+      });
       const prom = v / 7;
-      const dias = prom > 0 ? p.stock_actual / prom : 99;
-      const sug = Math.max(0, (prom * 3) - p.stock_actual);
+      const dias = prom > 0 ? (p.stock_actual || 0) / prom : 99;
+      const sug = Math.max(0, (prom * 3) - (p.stock_actual || 0));
       
-      let urg = 3;
-      if (p.stock_actual <= 0) urg = 0; // ROJO
+      let urg = 3; // Verde
+      if ((p.stock_actual || 0) <= 0) urg = 0; // ROJO
       else {
         const esKilo = p.unidad?.toLowerCase().includes('kg');
-        if (p.stock_actual <= (esKilo ? 1.5 : 5)) urg = 1; // NARANJA
+        if ((p.stock_actual || 0) <= (esKilo ? 1.5 : 5)) urg = 1; // NARANJA
         else if (dias < 1.5) urg = 2; // AMARILLO
       }
       
@@ -67,19 +75,78 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   const updateRegistro = (sku: string, field: string, value: any, itemRef?: any) => {
     setRegistroCompra(prev => {
-      const cur = prev[sku] || { cantidad: 0, cost: itemRef?.costo || 0, prev: itemRef?.precio_venta || 0, mgn: OBJETIVOS_UTILIDAD[itemRef?.categoria] || 0.15, nombre: itemRef?.nombre };
+      const cur = prev[sku] || { 
+        cantidad: 0, 
+        cost: itemRef?.costo || 0, 
+        prev: itemRef?.precio_venta || 0, 
+        mgn: OBJETIVOS_UTILIDAD[itemRef?.categoria] || 0.15, 
+        nombre: itemRef?.nombre 
+      };
       let upd = { ...cur, [field]: value };
-      if (field === 'cost') upd.prev = redondearPrecio(upd.cost * (1 + upd.mgn));
+      if (field === 'cost') {
+        const costoNum = parseFloat(value) || 0;
+        upd.prev = redondearPrecio(costoNum * (1 + upd.mgn));
+      }
       return { ...prev, [sku]: upd };
     });
   };
 
-  const totalInversion = Object.values(registroCompra).reduce((a, b) => a + (b.cantidad * b.cost || 0), 0);
-  const itemsEnLista = Object.values(registroCompra).filter(i => i.cantidad > 0).length;
+  const ejecutarCompraMaestra = async () => {
+    const items = Object.entries(registroCompra).filter(([_, val]) => val.cantidad > 0);
+    if (items.length === 0) return alert("Hugo, no has marcado nada para comprar.");
+    
+    setIsSubmitting(true);
+    try {
+      const tot = items.reduce((a, [_, d]) => a + (d.cantidad * d.cost || 0), 0);
+      const { data: h, error: errH } = await supabase.from('compras').insert({ 
+        proveedor_id: 1, 
+        folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`, 
+        total: tot 
+      }).select().single();
+
+      if (errH) throw errH;
+
+      for (const [sku, d] of items) {
+        const p = products.find(x => x.sku === sku);
+        const sBase = Math.max(0, p.stock_actual || 0);
+        const sTot = sBase + d.cantidad;
+        const cProm = ((sBase * (p.costo || 0)) + (d.cantidad * d.cost)) / sTot;
+        
+        await supabase.from('compras_detalle').insert({ 
+          compra_id: h.id, 
+          nombre: p.nombre, 
+          cantidad: d.cantidad, 
+          costo_unitario: d.cost, 
+          subtotal: d.cantidad * d.cost 
+        });
+        
+        await supabase.from('productos').update({ 
+          costo: Number(cProm.toFixed(2)), 
+          precio_venta: d.prev, 
+          stock_actual: sTot 
+        }).eq('sku', sku);
+      }
+      alert("✅ Sincronizado. Stock y Precios actualizados."); 
+      onBack();
+    } catch (e) { console.error(e); alert("Error en sincronización"); } finally { setIsSubmitting(false); }
+  };
+
+  const totalInversion = Object.values(registroCompra).reduce((a, b) => a + (Number(b.cantidad) * Number(b.cost) || 0), 0);
+  const itemsEnLista = Object.values(registroCompra).filter(i => Number(i.cantidad) > 0).length;
+
+  if (loading) return (
+    <div className="fixed inset-0 bg-black flex items-center justify-center z-[100]">
+      <div className="text-center">
+        <Zap className="text-green-500 animate-pulse mx-auto mb-4" size={48} />
+        <p className="text-green-500 font-black uppercase tracking-[0.3em] text-xs">Abriendo Ruta Hugo...</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden animate-in fade-in">
-      {/* HEADER TITANIUM */}
+    <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden animate-in fade-in duration-500">
+      
+      {/* HEADER TÁCTICO */}
       <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#050505] shadow-2xl">
         <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl hover:bg-white/10 transition-all active:scale-90"><X size={20} /></button>
         <div className="text-center">
@@ -110,7 +177,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
         {categoriesOrdered.map(cat => {
           const rawItems = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
-          // ✅ MEJORA: ORDENAR ARTÍCULOS DENTRO DE LA CATEGORÍA POR URGENCIA
+          // ✅ MEJORA: AGOTADOS ARRIBA (Prioridad 0, luego 1, etc.)
           const items = [...rawItems].sort((a, b) => a.urg - b.urg);
           const itemsActivos = items.filter(i => i.activo !== false);
           if (items.length === 0) return null;
@@ -119,11 +186,11 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           const colorCat = minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : minUrg === 2 ? 'bg-yellow-500' : 'bg-green-500';
 
           return (
-            <div key={cat} className={`rounded-[35px] border transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10' : 'border-white/5 opacity-80'}`}>
+            <div key={cat} className={`rounded-[35px] border transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10 shadow-2xl' : 'border-white/5 opacity-80'}`}>
               <button onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)} className="w-full p-6 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${colorCat} ${minUrg <= 1 && 'animate-pulse'}`}></div>
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">{cat}</h3>
+                  <div className={`w-3 h-3 rounded-full ${colorCat} ${minUrg <= 1 ? 'animate-pulse' : ''}`}></div>
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">{cat} ({itemsActivos.length})</h3>
                 </div>
                 <ChevronDown size={16} className={`text-gray-600 transition-transform ${expandedCategory === cat ? 'rotate-180' : ''}`}/>
               </button>
@@ -134,36 +201,40 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
                     const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: OBJETIVOS_UTILIDAD[item.categoria] || 0.15 };
                     const esBajo = item.urg <= 1;
                     const cardColor = item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : esBajo ? 'border-orange-500/30 bg-orange-500/[0.04]' : 'border-white/5 bg-white/[0.01]';
-                    const precioSube = data.cost > item.costo;
+                    const precioSube = Number(data.cost) > Number(item.costo);
 
                     return (
-                      <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${cardColor} ${item.activo === false && 'opacity-20 grayscale'}`}>
+                      <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${cardColor} ${item.activo === false ? 'opacity-20 grayscale' : ''}`}>
                         <div className="flex justify-between items-start mb-6">
                           <div>
                             <p className="text-[11px] font-black uppercase italic text-white leading-tight">{item.nombre}</p>
                             <p className="text-[8px] text-gray-600 font-bold mt-1 uppercase">Costo Actual: {formatCurrency(item.costo)}</p>
                           </div>
-                          <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${item.urg === 0 ? 'bg-red-600 text-white' : esBajo ? 'bg-orange-600 text-black' : 'bg-green-600/20 text-green-500'}`}>
+                          <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${item.urg === 0 ? 'bg-red-600 text-white' : esBajo ? 'bg-orange-500 text-black' : 'bg-green-600/20 text-green-500 border border-green-500/30'}`}>
                             {item.stock_actual} {item.unidad}
                           </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
-                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2">Comprar ({item.unidad})</label>
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 tracking-widest">Comprar ({item.unidad})</label>
                              <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', parseFloat(e.target.value), item)} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" placeholder={`Sug: ${item.sug}`}/>
                           </div>
                           <div className={`p-4 rounded-2xl border transition-all ${precioSube ? 'bg-red-600/5 border-red-600/20' : 'bg-black/50 border-white/5'}`}>
-                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 flex justify-between">Costo en Central {precioSube && <span className="text-red-500 flex items-center gap-1"><AlertTriangle size={8}/> CARO</span>}</label>
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 flex justify-between tracking-widest">Costo Central {precioSube && <span className="text-red-500 flex items-center gap-1 font-black"><AlertTriangle size={8}/> CARO</span>}</label>
                              <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', parseFloat(e.target.value), item)} className={`w-full bg-transparent text-2xl font-black outline-none ${precioSube ? 'text-red-500' : 'text-white'}`}/>
                           </div>
                         </div>
 
-                        {data.cantidad > 0 && (
+                        {Number(data.cantidad) > 0 && (
                           <div className="mt-4 p-5 bg-white/[0.03] border border-white/5 rounded-3xl flex justify-between items-center animate-in slide-in-from-top">
                              <div>
                                <p className="text-[7px] text-gray-500 font-black uppercase mb-1">Nueva Venta Sugerida</p>
-                               <div className="flex items-center gap-3"><p className="text-xl font-black text-white">{formatCurrency(data.prev)}</p><ArrowRight size={14} className="text-gray-700" /><p className="text-[9px] text-gray-500 uppercase font-black">Margen: {Math.round(data.mgn * 100)}%</p></div>
+                               <div className="flex items-center gap-3">
+                                 <p className="text-xl font-black text-white">{formatCurrency(data.prev)}</p>
+                                 <ArrowRight size={14} className="text-gray-700" />
+                                 <p className="text-[9px] text-gray-500 uppercase font-black">Margen: {Math.round(data.mgn * 100)}%</p>
+                               </div>
                              </div>
                              <TrendingUp className={precioSube ? 'text-red-500' : 'text-green-500'} size={24} />
                           </div>
@@ -178,10 +249,10 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         })}
       </div>
 
-      {/* ✅ MODAL DE LISTA DE MISIÓN (LISTA DE COMPRA RÁPIDA) */}
+      {/* ✅ LISTA DE MISIÓN (MODAL) */}
       {showChecklist && (
         <div className="fixed inset-0 z-[100] bg-black animate-in slide-in-from-bottom duration-500 flex flex-col">
-          <div className="p-8 border-b border-white/10 flex justify-between items-center bg-[#050505]">
+          <div className="p-8 border-b border-white/10 flex justify-between items-center bg-[#050505] shadow-2xl">
              <div>
                <h3 className="text-3xl font-black uppercase italic tracking-tighter">Lista de <span className="text-green-500">Misión</span></h3>
                <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest mt-1">Solo artículos seleccionados</p>
@@ -190,13 +261,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           </div>
           
           <div className="flex-1 overflow-y-auto p-6 space-y-3 no-scrollbar pb-40">
-            {Object.entries(registroCompra).filter(([_, v]) => v.cantidad > 0).map(([sku, v]) => (
+            {Object.entries(registroCompra).filter(([_, v]) => Number(v.cantidad) > 0).map(([sku, v]) => (
               <div key={sku} className="bg-[#0A0A0A] border border-white/5 p-6 rounded-[35px] flex justify-between items-center shadow-2xl">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 bg-green-600/10 border border-green-500/20 rounded-full flex items-center justify-center text-green-500"><CheckCircle2 size={18}/></div>
                   <div>
                     <p className="text-sm font-black uppercase italic">{v.nombre}</p>
-                    <p className="text-[10px] text-gray-500 font-black">Comprar: {v.cantidad} | Costo: {formatCurrency(v.cost)}</p>
+                    <p className="text-[10px] text-gray-500 font-black tracking-widest">Cant: {v.cantidad} | Costo: {formatCurrency(v.cost)}</p>
                   </div>
                 </div>
                 <p className="text-lg font-black text-white">{formatCurrency(v.cantidad * v.cost)}</p>
@@ -211,7 +282,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           </div>
           
           <div className="p-8 bg-black border-t border-white/10">
-            <button onClick={() => setShowChecklist(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-xs tracking-widest active:scale-95 transition-all">Regresar a la Ruta</button>
+            <button onClick={() => setShowChecklist(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-[0.3em] active:scale-95 transition-all shadow-2xl">Regresar a la Ruta</button>
           </div>
         </div>
       )}
