@@ -11,7 +11,6 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
   const [selectedProvider, setSelectedProvider] = useState<any>(null);
   const [productosProveedor, setProductosProveedor] = useState<any[]>([]);
   const [cambios, setCambios] = useState<Record<number, { cantidad: string, nuevoCosto: string }>>({});
-  const [showScanner, setShowScanner] = useState(false);
   const [folio, setFolio] = useState('');
 
   useEffect(() => { fetchProveedores(); }, []);
@@ -50,18 +49,16 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
         const item = cambios[id];
         const prodOriginal = productosProveedor.find(p => p.id === parseInt(id));
         
-        if (item.cantidad && item.cantidad !== '') {
+        if (item.cantidad && item.cantidad !== '' && prodOriginal) {
           const cantidadRecibida = parseFloat(item.cantidad);
           const costoNuevo = item.nuevoCosto ? parseFloat(item.nuevoCosto) : (prodOriginal.costo || 0);
           const subtotal = cantidadRecibida * costoNuevo;
           
           totalCompra += subtotal;
           
-          // ✅ PUNTO 5: LÓGICA DE COSTO PROMEDIO PONDERADO
           const stockActualVal = Math.max(0, prodOriginal.stock_actual || 0);
           const costoAnterior = prodOriginal.costo || 0;
           const stockTotal = stockActualVal + cantidadRecibida;
-          
           const costoPromedio = ((stockActualVal * costoAnterior) + (cantidadRecibida * costoNuevo)) / stockTotal;
 
           detallesParaInsertar.push({
@@ -89,9 +86,12 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
 
       if (errorCompra) throw errorCompra;
 
+      // ✅ CORRECCIÓN TITANIUM: Ahora sí insertamos producto_id y sku
       for (const d of detallesParaInsertar) {
         await supabase.from('compras_detalle').insert([{
           compra_id: compra.id,
+          producto_id: d.producto_id,
+          sku: d.sku,
           nombre: d.nombre,
           cantidad: d.cantidad,
           costo_unitario: d.costo_unitario,
@@ -104,7 +104,7 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
         }).eq('id', d.producto_id);
       }
 
-      alert(`✅ Compra ${folio} registrada. Costos promediados con éxito.`);
+      alert(`✅ Recibo ${folio} registrado con éxito.`);
       onBack();
     } catch (e: any) {
       alert("Error: " + e.message);
@@ -133,18 +133,18 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="min-h-screen pb-20 animate-in slide-in-from-right duration-500">
-      <div className="sticky top-20 bg-black/90 backdrop-blur-xl z-[60] p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
+      <div className="sticky top-0 bg-black/90 backdrop-blur-xl z-[60] p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-4 w-full md:w-auto">
           <div>
             <h2 className="text-2xl font-black uppercase italic leading-none">{selectedProvider.nombre}</h2>
-            <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase mt-1">Costo Promedio Activo</p>
+            <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase mt-1">Sincronización de Stock Activa</p>
           </div>
           <div className="flex-1 md:w-48 bg-white/5 p-3 rounded-2xl border border-white/10">
-            <input type="text" value={folio} onChange={(e) => setFolio(e.target.value)} placeholder="FOLIO / NOTA" className="bg-transparent text-white font-black outline-none w-full text-xs" />
+            <input type="text" value={folio} onChange={(e) => setFolio(e.target.value)} placeholder="FOLIO / NOTA" className="bg-transparent text-white font-black outline-none w-full text-xs uppercase" />
           </div>
         </div>
-        <button onClick={saveReceipt} disabled={loading} className="bg-green-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest">
-          {loading ? 'Sincronizando...' : 'Finalizar Recibo'}
+        <button onClick={saveReceipt} disabled={loading} className="w-full md:w-auto bg-green-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">
+          {loading ? 'Guardando...' : 'Finalizar Recibo'}
         </button>
       </div>
 
@@ -153,16 +153,16 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
           <div key={p.id} className="bg-[#0A0A0A] border border-white/5 p-6 rounded-[40px]">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
               <div>
-                <h4 className="text-[11px] font-black uppercase text-white">{p.nombre}</h4>
-                <p className="text-[9px] text-gray-600 font-bold uppercase">Stock: {p.stock_actual} {p.unidad}</p>
+                <h4 className="text-[11px] font-black uppercase text-white leading-tight">{p.nombre}</h4>
+                <p className="text-[9px] text-gray-600 font-bold uppercase mt-1">Stock Actual: {p.stock_actual} {p.unidad}</p>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 col-span-2">
                 <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
-                  <label className="text-[7px] text-gray-500 uppercase block mb-1">Costo Act: {formatCurrency(p.costo)}</label>
-                  <input type="number" placeholder="Nuevo $" className="w-full bg-transparent text-sm font-black text-white outline-none" onChange={(e) => handleInputChange(p.id, 'nuevoCosto', e.target.value)} />
+                  <label className="text-[7px] text-gray-500 uppercase block mb-1">Costo Unitario</label>
+                  <input type="number" placeholder={p.costo.toString()} className="w-full bg-transparent text-sm font-black text-white outline-none" onChange={(e) => handleInputChange(p.id, 'nuevoCosto', e.target.value)} />
                 </div>
                 <div className="bg-green-500/5 p-4 rounded-2xl border border-green-500/10">
-                  <label className="text-[7px] text-green-500/50 uppercase block mb-1">Cantidad</label>
+                  <label className="text-[7px] text-green-500/50 uppercase block mb-1">Cantidad a Recibir</label>
                   <input type="number" placeholder="+ 0" className="w-full bg-transparent text-xl font-black text-green-500 outline-none" onChange={(e) => handleInputChange(p.id, 'cantidad', e.target.value)} />
                 </div>
               </div>
