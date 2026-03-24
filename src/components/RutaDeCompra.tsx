@@ -4,7 +4,7 @@ import { formatCurrency } from '../lib/utils';
 import { 
   Zap, ChevronDown, Search, Eye, EyeOff, AlertTriangle, 
   Calculator, ClipboardList, CheckCircle2, X, ArrowRight, TrendingUp, Save, ShoppingCart
-} from 'lucide-center';
+} from 'lucide-react';
 import { format } from 'date-fns';
 
 const OBJETIVOS_UTILIDAD: Record<string, number> = { 
@@ -100,7 +100,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     try {
       const totalNota = items.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
       
-      // ✅ VÍNCULO TITANIUM: ABASTO CENTRAL (ID 1)
       const { data: compraHeader, error: errH } = await supabase.from('compras').insert({ 
         proveedor_id: 1, 
         proveedor: 'ABASTO CENTRAL',
@@ -160,9 +159,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
             <p className="text-[9px] text-green-500 font-black">{formatCurrency(resumenMision.dinero)}</p>
           </div>
         </div>
-        <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl border border-white/10">
-          <ClipboardList size={20} className={currentTotal > 0 ? 'text-green-500' : 'text-gray-500'} />
-        </button>
+        <div className="w-10"></div>
       </div>
 
       <div className="p-4 bg-[#080808] border-b border-white/5">
@@ -195,7 +192,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
                 <div className="px-4 pb-8 space-y-6">
                   {items.map(item => {
                     const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: OBJETIVOS_UTILIDAD[item.categoria] || 0.15 };
-                    const yaComprado = Number(data.cantidad) > 0;
                     return (
                       <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : 'border-white/5 bg-white/[0.01]'}`}>
                         <div className="flex justify-between items-start mb-6">
