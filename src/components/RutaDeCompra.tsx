@@ -4,7 +4,7 @@ import { formatCurrency } from '../lib/utils';
 import { 
   Zap, ChevronDown, Search, Eye, EyeOff, AlertTriangle, 
   Calculator, ClipboardList, CheckCircle2, X, ArrowRight, TrendingUp, Save, ShoppingCart
-} from 'lucide-react';
+} from 'lucide-center';
 import { format } from 'date-fns';
 
 const OBJETIVOS_UTILIDAD: Record<string, number> = { 
@@ -43,7 +43,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
       let v = 0;
       salesData.forEach(o => { 
         const items = Array.isArray(o.detalle_pedido) ? o.detalle_pedido : [];
-        const i = items.find((x: any) => (x.sku || x.SKU || x.producto_sku) === p.sku); 
+        const i = items.find((x: any) => (x.sku || x.SKU) === p.sku); 
         if (i) v += (Number(i.quantity) || 0); 
       });
       const prom = v / 7;
@@ -100,11 +100,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     try {
       const totalNota = items.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
       
-      // ✅ 1. CREAMOS EL ENCABEZADO DE COMPRA (Vinculado a Abasto Central ID 1)
+      // ✅ VÍNCULO TITANIUM: ABASTO CENTRAL (ID 1)
       const { data: compraHeader, error: errH } = await supabase.from('compras').insert({ 
-        proveedor_id: 1, // ID de Abasto Central
+        proveedor_id: 1, 
+        proveedor: 'ABASTO CENTRAL',
         folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`, 
-        total: totalNota, // Usamos la columna nueva 'total'
+        total: totalNota,
+        total_compra: totalNota,
         metodo_pago: 'Efectivo'
       }).select().single();
 
@@ -120,7 +122,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         const stockTotal = stockActual + cant;
         const costoPromedio = ((stockActual * (p.costo || 0)) + (cant * costoUnitario)) / stockTotal;
         
-        // ✅ 2. GUARDAMOS EL DETALLE (Adiós a los NULLs)
         await supabase.from('compras_detalle').insert({ 
           compra_id: compraHeader.id, 
           producto_id: p.id, 
@@ -131,7 +132,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
           subtotal: cant * costoUnitario 
         });
 
-        // ✅ 3. ACTUALIZAMOS EL PRODUCTO (Costo Promedio y Stock)
         await supabase.from('productos').update({ 
           costo: Number(costoPromedio.toFixed(2)), 
           precio_venta: Number(d.prev), 
@@ -139,7 +139,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         }).eq('id', p.id);
       }
 
-      alert("✅ ¡Misión de Abasto Cumplida! Inventario actualizado."); 
+      alert("✅ Misión de Abasto Sincronizada."); 
       onBack();
     } catch (e: any) { alert("Error: " + e.message); } finally { setIsSubmitting(false); }
   };
@@ -156,17 +156,12 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         <div className="text-center">
           <h2 className="text-xl font-black uppercase italic tracking-tighter">Misión <span className="text-green-500">Central</span></h2>
           <div className="flex items-center gap-2 justify-center mt-1">
-            <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest">Presupuesto Sugerido:</p>
+            <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest">Presupuesto:</p>
             <p className="text-[9px] text-green-500 font-black">{formatCurrency(resumenMision.dinero)}</p>
           </div>
         </div>
         <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl border border-white/10">
           <ClipboardList size={20} className={currentTotal > 0 ? 'text-green-500' : 'text-gray-500'} />
-          {analysis.filter(p => p.urg < 3 && p.activo !== false).length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center">
-              {analysis.filter(p => p.urg < 3 && p.activo !== false).length}
-            </span>
-          )}
         </button>
       </div>
 
@@ -181,10 +176,9 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         {categoriesOrdered.map(cat => {
           const rawItems = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
           const items = [...rawItems].sort((a, b) => a.urg - b.urg);
-          const itemsActivos = items.filter(i => i.activo !== false);
           if (items.length === 0) return null;
 
-          const minUrg = itemsActivos.length > 0 ? Math.min(...itemsActivos.map(i => i.urg)) : 3;
+          const minUrg = items.filter(i => i.activo !== false).length > 0 ? Math.min(...items.filter(i => i.activo !== false).map(i => i.urg)) : 3;
           const colorCat = minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : 'bg-green-500';
 
           return (
@@ -201,27 +195,16 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
                 <div className="px-4 pb-8 space-y-6">
                   {items.map(item => {
                     const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: OBJETIVOS_UTILIDAD[item.categoria] || 0.15 };
-                    const cardColor = item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : item.urg === 1 ? 'border-orange-500/30 bg-orange-500/[0.04]' : 'border-white/5 bg-white/[0.01]';
                     const yaComprado = Number(data.cantidad) > 0;
-
                     return (
-                      <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${cardColor} ${item.activo === false ? 'opacity-10 grayscale' : ''}`}>
+                      <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : 'border-white/5 bg-white/[0.01]'}`}>
                         <div className="flex justify-between items-start mb-6">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-[11px] font-black uppercase italic text-white leading-tight">{item.nombre}</p>
-                              {yaComprado && <CheckCircle2 size={14} className="text-green-500" />}
-                            </div>
-                            <p className="text-[8px] text-gray-600 font-bold mt-1 uppercase">Costo Actual: {formatCurrency(item.costo)}</p>
-                          </div>
-                          <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${item.urg === 0 ? 'bg-red-600 text-white' : item.urg === 1 ? 'bg-orange-500 text-black' : 'bg-green-600/20 text-green-500'}`}>
-                            {item.stock_actual} {item.unidad}
-                          </div>
+                          <div><p className="text-[11px] font-black uppercase italic text-white">{item.nombre}</p><p className="text-[8px] text-gray-600 font-bold uppercase mt-1">Costo Actual: {formatCurrency(item.costo)}</p></div>
+                          <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${item.urg === 0 ? 'bg-red-600 text-white' : 'bg-green-600/20 text-green-500'}`}>{item.stock_actual} {item.unidad}</div>
                         </div>
-
                         <div className="grid grid-cols-2 gap-4">
-                          <div className={`bg-black/50 p-4 rounded-2xl border transition-all ${yaComprado ? 'border-green-500/30' : 'border-white/5'}`}>
-                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 tracking-widest">¿Cuánto Compras? ({item.unidad})</label>
+                          <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 tracking-widest">Cantidad</label>
                              <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" placeholder={`Sug: ${item.sug}`}/>
                           </div>
                           <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
@@ -240,13 +223,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
       </div>
 
       {/* FOOTER */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 shadow-[0_-20px_50px_rgba(0,0,0,1)] z-[60]">
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60]">
         <div className="max-w-7xl mx-auto flex justify-between items-end mb-4 px-2">
           <div><p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Inversión Actual</p><p className="text-3xl font-black text-white tracking-tighter">{formatCurrency(currentTotal)}</p></div>
-          <div className="text-right"><p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Artículos</p><p className="text-xl font-black text-green-500">{Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length}</p></div>
+          <p className="text-xl font-black text-green-500">{Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length} Artículos</p>
         </div>
-        <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[28px] text-black font-black uppercase text-xs tracking-[0.3em] shadow-xl shadow-green-900/20 flex items-center justify-center gap-3 active:scale-95 transition-all">
-          {issubmitting ? 'Sincronizando...' : <><Save size={18}/> Finalizar y Cargar Stock</>}
+        <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[28px] text-black font-black uppercase text-xs tracking-[0.3em] active:scale-95 transition-all">
+          {issubmitting ? 'Sincronizando...' : 'Finalizar y Cargar Stock'}
         </button>
       </div>
     </div>
