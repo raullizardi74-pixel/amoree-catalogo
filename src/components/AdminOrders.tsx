@@ -8,11 +8,10 @@ import RutaDeCompra from './RutaDeCompra';
 import InventoryModule from './InventoryModule'; 
 import ReciboModule from './ReciboModule'; 
 import AuditoriaModule from './AuditoriaModule';
-import { Scanner } from './Scanner';
 import { format } from 'date-fns';
 import { 
-  Package, LayoutDashboard, ShoppingBag, Users, 
-  BarChart3, Truck, Calculator, X, Clock, ShieldCheck, Search
+  Package, ShoppingBag, Users, BarChart3, Truck, 
+  Calculator, X, ShieldCheck, Search
 } from 'lucide-react';
 
 export default function AdminOrders() {
@@ -30,43 +29,51 @@ export default function AdminOrders() {
   const [otrosGastos, setOtrosGastos] = useState(0); 
   const [efectivoFisico, setEfectivoFisico] = useState(0);
 
-  // 🛡️ LÓGICA TITANIUM: Rango de Fecha exacto para México (UTC-6)
+  // 🛡️ MAGIA TITANIUM: Generador de Rango de Fecha Local México (CST UTC-6)
   const getMexicoRange = () => {
-    // Calculamos la fecha actual en la zona horaria de México
-    const mxDate = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Mexico_City"}));
-    const y = mxDate.getFullYear();
-    const m = String(mxDate.getMonth() + 1).padStart(2, '0');
-    const d = String(mxDate.getDate()).padStart(2, '0');
-    const base = `${y}-${m}-${d}`;
+    // Usamos Intl para obtener la fecha real en México sin importar el dispositivo
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Mexico_City',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    });
+    
+    const baseMX = formatter.format(new Date()); // Retorna "YYYY-MM-DD"
+    const [y, m, d] = baseMX.split('-');
 
     return {
-      inicio: `${base}T00:00:00-06:00`,
-      fin: `${base}T23:59:59-06:00`,
+      // Forzamos el offset -06:00 para que Supabase lo entienda perfecto
+      inicio: `${baseMX}T00:00:00-06:00`,
+      fin: `${baseMX}T23:59:59-06:00`,
       hoyLegible: `${d}/${m}/${y}`
     };
   };
 
-  // ✅ FILTRO GLOBAL: Solo carga lo que ha pasado en el "Hoy" de México
   const fetchData = async () => {
     setLoading(true);
-    const { inicio, fin } = getMexicoRange();
+    try {
+      const { inicio, fin } = getMexicoRange();
 
-    // 1. Pedidos del día
-    const { data: p } = await supabase.from('pedidos')
-      .select('*')
-      .gte('created_at', inicio)
-      .lte('created_at', fin)
-      .order('created_at', { ascending: false });
+      // 1. Pedidos (Ventas): Filtro Global Hoy México
+      const { data: p } = await supabase.from('pedidos')
+        .select('*')
+        .gte('created_at', inicio)
+        .lte('created_at', fin)
+        .order('created_at', { ascending: false });
 
-    // 2. Compras/Recibos del día (FEMSA, Central, etc.)
-    const { data: c } = await supabase.from('compras')
-      .select('*, proveedores(nombre)') // Si falla el join, jala el texto de 'proveedor'
-      .gte('created_at', inicio)
-      .lte('created_at', fin);
+      // 2. Compras (Recibos): Filtro Global Hoy México
+      // Usamos una selección más abierta por si el join de proveedores falla
+      const { data: c } = await supabase.from('compras')
+        .select('id, created_at, total, total_compra, proveedor, folio, proveedor_id')
+        .gte('created_at', inicio)
+        .lte('created_at', fin);
 
-    if (p) setOrders(p);
-    if (c) setComprasHoy(c || []);
-    setLoading(false);
+      if (p) setOrders(p);
+      if (c) setComprasHoy(c || []);
+    } catch (error) {
+      console.error("Error en Sync Titanium:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { fetchData(); }, [view]);
@@ -76,17 +83,15 @@ export default function AdminOrders() {
     if (cleanTel) window.open(`https://wa.me/52${cleanTel}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
-  // ✅ PREPARAR CORTE: Ahora es asíncrono para asegurar datos frescos
+  // ✅ PREPARAR CORTE: Recarga datos antes de abrir para no perder nada
   const prepararCorte = async () => {
-    await fetchData(); // Refrescamos antes de abrir para atrapar el último recibo
-    const { inicio, fin } = getMexicoRange();
+    setLoading(true);
+    await fetchData(); 
     
-    // Ventas de Hoy en Efectivo
     const ventasEfectivoHoy = orders.filter(o => 
       o.estado === 'Finalizado' && (o.metodo_pago === 'Efectivo' || !o.metodo_pago)
-    ).reduce((acc, o) => acc + o.total, 0);
+    ).reduce((acc, o) => acc + (Number(o.total) || 0), 0);
 
-    // Sumamos Recibos de Hoy (buscando en total o total_compra)
     const totalRecibos = comprasHoy.reduce((acc, curr) => 
       acc + (Number(curr.total) || Number(curr.total_compra) || 0), 0
     );
@@ -112,7 +117,7 @@ export default function AdminOrders() {
     msg += `--------------------------\n`;
     msg += dif < 0 ? `⚠️ FALTANTE: *${formatCurrency(dif)}*` : dif > 0 ? `✅ SOBRANTE: *${formatCurrency(dif)}*` : `💎 CAJA CUADRADA`;
     
-    sendWA("52XXXXXXXXXX", msg); 
+    sendWA("52XXXXXXXXXX", msg); // Número de Hugo
     setShowCorteModal(false);
   };
 
@@ -156,40 +161,36 @@ export default function AdminOrders() {
               </div>
               <div className="flex-1 w-full relative">
                  <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-600" size={18} />
-                 <input type="text" placeholder="BUSCAR EN HOY..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/5 rounded-[22px] py-4 pl-16 pr-8 text-[10px] font-black uppercase outline-none focus:border-green-500" />
+                 <input type="text" placeholder={`BUSCAR EN ${getMexicoRange().hoyLegible}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/5 rounded-[22px] py-4 pl-16 pr-8 text-[10px] font-black uppercase outline-none focus:border-green-500" />
               </div>
               <button onClick={prepararCorte} className="w-full md:w-auto bg-blue-600 hover:bg-blue-500 text-white px-10 py-4 rounded-[22px] text-[10px] font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all">
                 <Calculator size={16}/> Corte de Caja
               </button>
             </div>
 
-            {loading ? (
-              <div className="text-center py-20 font-black uppercase tracking-widest text-[10px] opacity-30 animate-pulse">Sincronizando día...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {getFilteredOrders().map(order => (
-                  <div key={order.id} className={`bg-[#0A0A0A] border rounded-[50px] p-10 transition-all ${order.estado === 'Finalizado' ? 'border-white/5 opacity-50' : 'border-white/10 shadow-2xl'}`}>
-                    <div className="flex justify-between items-start mb-6">
-                      <div>
-                        <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente}</h3>
-                        <p className="text-[9px] text-gray-600 font-black mt-1 uppercase tracking-widest">{format(new Date(order.created_at), 'HH:mm')} hrs</p>
-                      </div>
-                      <p className="text-2xl font-black text-white">{formatCurrency(order.total)}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {getFilteredOrders().map(order => (
+                <div key={order.id} className={`bg-[#0A0A0A] border rounded-[50px] p-10 transition-all ${order.estado === 'Finalizado' ? 'border-white/5 opacity-50' : 'border-white/10 shadow-2xl'}`}>
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente}</h3>
+                      <p className="text-[9px] text-gray-600 font-black mt-1 uppercase tracking-widest">{format(new Date(order.created_at), 'HH:mm')} hrs</p>
                     </div>
-                    <div className="flex flex-wrap gap-2 pt-4 border-t border-white/5">
-                      {order.detalle_pedido?.map((item: any, idx: number) => (
-                        <span key={idx} className="text-[7px] font-black uppercase bg-white/[0.03] px-2 py-1 rounded-md text-gray-500">{item.quantity}{item.unidad || 'kg'} {item.nombre}</span>
-                      ))}
-                    </div>
+                    <p className="text-2xl font-black text-white">{formatCurrency(order.total)}</p>
                   </div>
-                ))}
-                {getFilteredOrders().length === 0 && (
-                  <div className="col-span-full text-center py-24 border border-dashed border-white/5 rounded-[60px] bg-white/[0.01]">
-                    <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.4em]">Sin actividad registrada hoy en {getMexicoRange().hoyLegible}</p>
+                  <div className="flex flex-wrap gap-2 pt-4 border-t border-white/5">
+                    {order.detalle_pedido?.map((item: any, idx: number) => (
+                      <span key={idx} className="text-[7px] font-black uppercase bg-white/[0.03] px-2 py-1 rounded-md text-gray-500">{item.quantity}{item.unidad || 'kg'} {item.nombre}</span>
+                    ))}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              ))}
+              {getFilteredOrders().length === 0 && (
+                <div className="col-span-full text-center py-24 border border-dashed border-white/5 rounded-[60px] bg-white/[0.01]">
+                   <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.4em]">Sin movimientos en Amoree hoy {getMexicoRange().hoyLegible}</p>
+                </div>
+              )}
+            </div>
           </>
         ) : view === 'inventory' ? <InventoryModule onBack={() => setView('orders')} /> 
           : view === 'recibo' ? <ReciboModule onBack={() => setView('orders')} />
@@ -200,7 +201,7 @@ export default function AdminOrders() {
           : <ClientsModule />}
       </div>
 
-      {/* MODAL CORTE MAESTRO TITANIUM */}
+      {/* ✅ MODAL CORTE MAESTRO: VERSIÓN SCROLLABLE PARA CELULAR */}
       {showCorteModal && corteSummary && (
         <div className="fixed inset-0 z-[200] flex items-start md:items-center justify-center p-2 md:p-4 bg-black/95 backdrop-blur-xl overflow-y-auto no-scrollbar">
           <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8 my-auto">
@@ -216,7 +217,7 @@ export default function AdminOrders() {
                 <div className="space-y-3 max-h-40 overflow-y-auto no-scrollbar">
                   {corteSummary.detallesRecibos.map((r: any) => (
                     <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase border-b border-white/5 pb-2">
-                      <span className="text-gray-500 truncate mr-2">🚚 {r.proveedores?.nombre || r.proveedor || 'Proveedor'}</span>
+                      <span className="text-gray-500 truncate mr-2">🚚 {r.proveedor || 'Abasto Central'}</span>
                       <span className="text-red-500 shrink-0">-{formatCurrency(r.total || r.total_compra)}</span>
                     </div>
                   ))}
@@ -229,7 +230,7 @@ export default function AdminOrders() {
               </div>
               <div className="bg-green-600/5 p-4 md:p-6 rounded-3xl border border-green-500/20">
                 <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico en Cajón</label>
-                <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl md:text-4xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
+                <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
               </div>
             </div>
             <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-8 md:p-10 flex flex-col justify-center text-center">
