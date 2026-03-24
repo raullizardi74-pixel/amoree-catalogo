@@ -38,13 +38,12 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // 🧠 CEREBRO DE ANÁLISIS: Calcula Sugerencias y Urgencia
   const analysis = useMemo(() => {
     return products.map(p => {
       let v = 0;
       salesData.forEach(o => { 
         const items = Array.isArray(o.detalle_pedido) ? o.detalle_pedido : [];
-        const i = items.find((x: any) => (x.sku || x.SKU) === p.sku); 
+        const i = items.find((x: any) => (x.sku || x.SKU || x.producto_sku) === p.sku); 
         if (i) v += (Number(i.quantity) || 0); 
       });
       const prom = v / 7;
@@ -60,7 +59,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     });
   }, [products, salesData]);
 
-  // Cálculo de Presupuesto Inicial (Lo que Hugo necesita antes de salir)
   const resumenMision = useMemo(() => {
     const itemsFaltantes = analysis.filter(p => p.urg < 3 && p.activo !== false);
     const dineroNecesario = itemsFaltantes.reduce((acc, curr) => acc + curr.presupuesto, 0);
@@ -86,7 +84,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         prev: itemRef?.precio_venta || 0, 
         mgn: OBJETIVOS_UTILIDAD[itemRef?.categoria] || 0.15, 
         nombre: itemRef?.nombre,
-        id: itemRef?.id // ✅ CRUCIAL: Guardar ID para evitar NULL
+        id: itemRef?.id
       };
       let upd = { ...cur, [field]: value };
       if (field === 'cost') upd.prev = redondearPrecio(parseFloat(value || 0) * (1 + upd.mgn));
@@ -94,19 +92,20 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     });
   };
 
-  // ✅ GUARDADO BLINDADO: Mapea ID y SKU para evitar NULLs en Supabase
   const ejecutarCompraMaestra = async () => {
     const items = Object.entries(registroCompra).filter(([_, val]) => Number(val.cantidad) > 0);
     if (items.length === 0) return alert("Socio, no hay productos en el carrito.");
     
     setIsSubmitting(true);
     try {
-      const tot = items.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
+      const totalNota = items.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
       
-      const { data: h, error: errH } = await supabase.from('compras').insert({ 
-        proveedor_id: 1, 
+      // ✅ 1. CREAMOS EL ENCABEZADO DE COMPRA (Vinculado a Abasto Central ID 1)
+      const { data: compraHeader, error: errH } = await supabase.from('compras').insert({ 
+        proveedor_id: 1, // ID de Abasto Central
         folio: `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`, 
-        total: tot 
+        total: totalNota, // Usamos la columna nueva 'total'
+        metodo_pago: 'Efectivo'
       }).select().single();
 
       if (errH) throw errH;
@@ -116,22 +115,23 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         if (!p) continue;
 
         const cant = Number(d.cantidad);
-        const costo = Number(d.cost);
+        const costoUnitario = Number(d.cost);
         const stockActual = Math.max(0, p.stock_actual || 0);
         const stockTotal = stockActual + cant;
-        const costoPromedio = ((stockActual * (p.costo || 0)) + (cant * costo)) / stockTotal;
+        const costoPromedio = ((stockActual * (p.costo || 0)) + (cant * costoUnitario)) / stockTotal;
         
-        // ✅ INSERCIÓN EXPLÍCITA DE PRODUCTO_ID Y SKU (ADIÓS AL NULL)
+        // ✅ 2. GUARDAMOS EL DETALLE (Adiós a los NULLs)
         await supabase.from('compras_detalle').insert({ 
-          compra_id: h.id, 
+          compra_id: compraHeader.id, 
           producto_id: p.id, 
           sku: p.sku,
           nombre: p.nombre, 
           cantidad: cant, 
-          costo_unitario: costo, 
-          subtotal: cant * costo 
+          costo_unitario: costoUnitario, 
+          subtotal: cant * costoUnitario 
         });
 
+        // ✅ 3. ACTUALIZAMOS EL PRODUCTO (Costo Promedio y Stock)
         await supabase.from('productos').update({ 
           costo: Number(costoPromedio.toFixed(2)), 
           precio_venta: Number(d.prev), 
@@ -139,7 +139,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         }).eq('id', p.id);
       }
 
-      alert("✅ ¡Misión Cumplida! Inventario y Supabase actualizados."); 
+      alert("✅ ¡Misión de Abasto Cumplida! Inventario actualizado."); 
       onBack();
     } catch (e: any) { alert("Error: " + e.message); } finally { setIsSubmitting(false); }
   };
@@ -150,14 +150,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden animate-in fade-in">
-      
-      {/* HEADER DE MISIÓN */}
+      {/* HEADER */}
       <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#050505] shadow-2xl">
         <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl hover:bg-white/10 transition-all active:scale-90"><X size={20} /></button>
         <div className="text-center">
           <h2 className="text-xl font-black uppercase italic tracking-tighter">Misión <span className="text-green-500">Central</span></h2>
           <div className="flex items-center gap-2 justify-center mt-1">
-            <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest">Presupuesto Estimado:</p>
+            <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest">Presupuesto Sugerido:</p>
             <p className="text-[9px] text-green-500 font-black">{formatCurrency(resumenMision.dinero)}</p>
           </div>
         </div>
@@ -171,15 +170,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {/* BUSCADOR */}
       <div className="p-4 bg-[#080808] border-b border-white/5">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16}/>
-          <input type="text" placeholder="BUSCAR ARTÍCULO..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-xs font-black text-green-500 uppercase outline-none focus:border-green-600" />
+          <input type="text" placeholder="BUSCAR EN LA CENTRAL..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-xs font-black text-green-500 uppercase outline-none focus:border-green-600" />
         </div>
       </div>
 
-      {/* CUERPO DE RUTA */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
         {categoriesOrdered.map(cat => {
           const rawItems = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
@@ -232,16 +229,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
                              <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-white outline-none" />
                           </div>
                         </div>
-
-                        {yaComprado && (
-                          <div className="mt-4 p-5 bg-white/[0.03] border border-white/5 rounded-3xl flex justify-between items-center animate-in slide-in-from-top">
-                             <div>
-                               <p className="text-[7px] text-gray-500 font-black uppercase mb-1 italic">Sugerencia Amoree p/ Venta</p>
-                               <div className="flex items-center gap-3"><p className="text-xl font-black text-white">{formatCurrency(data.prev)}</p><ArrowRight size={14} className="text-gray-700" /><p className="text-[9px] text-gray-500 uppercase font-black">{Math.round(data.mgn * 100)}% Margen</p></div>
-                             </div>
-                             <TrendingUp className={data.cost > item.costo ? 'text-red-500' : 'text-green-500'} size={24} />
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -252,57 +239,14 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         })}
       </div>
 
-      {/* ✅ MODAL DE CHECKLIST (LISTA DE MISIÓN) */}
-      {showChecklist && (
-        <div className="fixed inset-0 z-[100] bg-black animate-in slide-in-from-bottom duration-500 flex flex-col">
-          <div className="p-8 border-b border-white/10 flex justify-between items-center bg-[#050505] shadow-2xl">
-             <div><h3 className="text-3xl font-black uppercase italic tracking-tighter">Lista de <span className="text-green-500">Misión</span></h3><p className="text-[9px] text-gray-500 font-black uppercase tracking-widest mt-1">Hugo, esto es lo que falta/llevas</p></div>
-             <button onClick={() => setShowChecklist(false)} className="bg-white/5 p-4 rounded-full text-white hover:bg-white/10 transition-all active:rotate-90"><X size={24}/></button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar pb-40">
-            {/* SECCIÓN PENDIENTES */}
-            <div>
-              <p className="text-[9px] font-black text-red-500 uppercase tracking-[0.3em] mb-4">🛒 POR COMPRAR</p>
-              <div className="space-y-3">
-                {analysis.filter(p => p.urg < 3 && p.activo !== false && !registroCompra[p.sku]?.cantidad).map(p => (
-                  <div key={p.sku} className="bg-white/[0.02] border border-white/5 p-6 rounded-[30px] flex justify-between items-center opacity-70">
-                    <div><p className="text-xs font-black uppercase text-white">{p.nombre}</p><p className="text-[8px] text-gray-500 font-bold uppercase">Sugerido: {p.sug} {p.unidad}</p></div>
-                    <p className="text-xs font-black text-gray-600 italic">Pendiente</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* SECCIÓN LISTOS (LO QUE YA SE ANOTÓ) */}
-            <div>
-              <p className="text-[9px] font-black text-green-500 uppercase tracking-[0.3em] mb-4">✅ YA EN CAMIONETA</p>
-              <div className="space-y-3">
-                {Object.entries(registroCompra).filter(([_, v]) => Number(v.cantidad) > 0).map(([sku, v]) => (
-                  <div key={sku} className="bg-green-500/5 border border-green-500/20 p-6 rounded-[30px] flex justify-between items-center shadow-xl">
-                    <div className="flex items-center gap-4">
-                      <CheckCircle2 size={20} className="text-green-500"/>
-                      <div><p className="text-xs font-black uppercase text-white italic">{v.nombre}</p><p className="text-[8px] text-green-500/60 font-black uppercase tracking-widest">Cant: {v.cantidad} | Total: {formatCurrency(v.cantidad * v.cost)}</p></div>
-                    </div>
-                    <div className="text-right"><p className="text-xs font-black text-white">{formatCurrency(Number(v.cost))}</p></div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-8 bg-black border-t border-white/10"><button onClick={() => setShowChecklist(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-[0.3em] shadow-2xl active:scale-95 transition-all">Regresar a Surtir</button></div>
-        </div>
-      )}
-
-      {/* FOOTER DE IMPACTO */}
+      {/* FOOTER */}
       <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 shadow-[0_-20px_50px_rgba(0,0,0,1)] z-[60]">
         <div className="max-w-7xl mx-auto flex justify-between items-end mb-4 px-2">
           <div><p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Inversión Actual</p><p className="text-3xl font-black text-white tracking-tighter">{formatCurrency(currentTotal)}</p></div>
           <div className="text-right"><p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Artículos</p><p className="text-xl font-black text-green-500">{Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length}</p></div>
         </div>
         <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[28px] text-black font-black uppercase text-xs tracking-[0.3em] shadow-xl shadow-green-900/20 flex items-center justify-center gap-3 active:scale-95 transition-all">
-          {issubmitting ? 'Sincronizando Misión...' : <><Save size={18}/> Finalizar y Cargar Stock</>}
+          {issubmitting ? 'Sincronizando...' : <><Save size={18}/> Finalizar y Cargar Stock</>}
         </button>
       </div>
     </div>
