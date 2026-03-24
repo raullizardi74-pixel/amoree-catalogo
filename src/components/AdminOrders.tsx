@@ -260,62 +260,59 @@ export default function AdminOrders() {
           : <ClientsModule />}
       </div>
 
-      {/* ✅ MODAL CORTE MAESTRO (RESTAURADO SEGÚN IMAGE_BB1B1F) */}
-      {showCorteModal && corteSummary && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-in zoom-in-95 duration-300">
-          <div className="bg-[#0A0A0A] border border-white/10 rounded-[60px] p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8">
-            <button onClick={() => setShowCorteModal(false)} className="absolute top-10 right-10 text-gray-500 hover:text-white"><X/></button>
-            
-            {/* COLUMNA IZQUIERDA: CAPTURA */}
-            <div className="flex-1 space-y-6">
-              <h2 className="text-3xl font-black uppercase italic text-blue-500 mb-8">Corte Maestro</h2>
-              
-              <div className="bg-black/50 p-6 rounded-3xl border border-white/5">
-                <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
-                <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-2xl font-black text-white outline-none w-full" />
-              </div>
+    {/* ✅ MODAL CORTE MAESTRO: VERSIÓN RESPONSIVE CON SCROLL */}
+{showCorteModal && corteSummary && (
+  <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/95 backdrop-blur-xl overflow-y-auto">
+    <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8 my-auto">
+      <button onClick={() => setShowCorteModal(false)} className="absolute top-6 right-6 md:top-10 md:right-10 text-gray-500 hover:text-white z-10"><X/></button>
+      
+      {/* SECCIÓN DE CAPTURA */}
+      <div className="flex-1 space-y-4 md:space-y-6">
+        <h2 className="text-2xl md:text-3xl font-black uppercase italic text-blue-500 mb-4 md:mb-8">Corte Maestro</h2>
+        
+        <div className="bg-black/50 p-4 md:p-6 rounded-3xl border border-white/5">
+          <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
+          <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-xl font-black text-white outline-none w-full" />
+        </div>
 
-              <div className="bg-white/[0.02] p-6 rounded-3xl border border-white/5">
-                <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest">Pagos Detectados en Recibo (Automático)</p>
-                <div className="space-y-3 max-h-40 overflow-y-auto no-scrollbar">
-                  {corteSummary.detallesRecibos.map((r: any) => (
-                    <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase">
-                      <span className="text-gray-500">🚚 {r.proveedores?.nombre || 'Proveedor'}</span>
-                      <span className="text-red-500">-{formatCurrency(r.total)}</span>
-                    </div>
-                  ))}
-                  {corteSummary.detallesRecibos.length === 0 && <p className="text-[10px] text-gray-700 italic">No hay recibos registrados hoy</p>}
-                </div>
+        <div className="bg-white/[0.02] p-4 md:p-6 rounded-3xl border border-white/5">
+          <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest italic">Pagos Automáticos Detectados</p>
+          <div className="space-y-3 max-h-32 overflow-y-auto no-scrollbar">
+            {corteSummary.detallesRecibos.map((r: any) => (
+              <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase border-b border-white/5 pb-2">
+                <span className="text-gray-500 truncate mr-2">🚚 {r.proveedores?.nombre || 'Proveedor'}</span>
+                <span className="text-red-500 shrink-0">-{formatCurrency(r.total)}</span>
               </div>
-
-              <div className="bg-red-600/5 p-6 rounded-3xl border border-red-500/20">
-                <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Otros Gastos (Manuales / Sin Recibo)</label>
-                <input type="number" value={otrosGastos} onChange={(e) => setOtrosGastos(Number(e.target.value))} className="bg-transparent text-2xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
-              </div>
-
-              <div className="bg-green-600/5 p-6 rounded-3xl border border-green-500/20">
-                <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico en Cajón (Contado)</label>
-                <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-4xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
-              </div>
-            </div>
-
-            {/* COLUMNA DERECHA: RESULTADOS */}
-            <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-10 flex flex-col justify-center text-center">
-              <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Efectivo Esperado</p>
-              <p className="text-3xl font-black mb-10">{formatCurrency(corteSummary.esperado)}</p>
-              
-              <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Diferencia Final</p>
-              <p className={`text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                {formatCurrency(efectivoFisico - corteSummary.esperado)}
-              </p>
-              
-              <button onClick={enviarCorteWA} className="mt-12 w-full bg-white text-black py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">
-                Confirmar y Enviar Reporte
-              </button>
-            </div>
+            ))}
+            {corteSummary.detallesRecibos.length === 0 && <p className="text-[9px] text-gray-700 italic">No hay recibos registrados hoy</p>}
           </div>
         </div>
-      )}
+
+        <div className="bg-red-600/5 p-4 md:p-6 rounded-3xl border border-red-500/20">
+          <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Otros Gastos (Sin Recibo)</label>
+          <input type="number" value={otrosGastos} onChange={(e) => setOtrosGastos(Number(e.target.value))} className="bg-transparent text-xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
+        </div>
+
+        <div className="bg-green-600/5 p-4 md:p-6 rounded-3xl border border-green-500/20">
+          <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico (Contado)</label>
+          <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl md:text-4xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
+        </div>
+      </div>
+
+      {/* RESULTADOS Y CIERRE */}
+      <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-8 md:p-10 flex flex-col justify-center text-center">
+        <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Esperado</p>
+        <p className="text-2xl md:text-3xl font-black mb-6 md:mb-10">{formatCurrency(corteSummary.esperado)}</p>
+        
+        <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Diferencia</p>
+        <p className={`text-4xl md:text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>
+          {formatCurrency(efectivoFisico - corteSummary.esperado)}
+        </p>
+        
+        <button onClick={enviarCorteWA} className="mt-8 md:mt-12 w-full bg-white text-black py-5 md:py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">
+          Cerrar Día y Enviar
+        </button>
+      </div>
     </div>
-  );
-}
+  </div>
+)}
