@@ -9,7 +9,10 @@ import InventoryModule from './InventoryModule';
 import ReciboModule from './ReciboModule'; 
 import { Scanner } from './Scanner';
 import { format } from 'date-fns';
-import { Package, LayoutDashboard, ShoppingBag, Users, BarChart3, Truck, Calculator, X } from 'lucide-react';
+import { 
+  Package, LayoutDashboard, ShoppingBag, Users, 
+  BarChart3, Truck, Calculator, X, Clock, creditCard 
+} from 'lucide-react';
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
@@ -178,16 +181,40 @@ export default function AdminOrders() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {getFilteredOrders().map(order => (
-                <div key={order.id} className={`bg-[#0A0A0A] border rounded-[50px] p-10 transition-all ${order.estado === 'Finalizado' ? 'opacity-50 grayscale border-white/5' : 'border-white/10 shadow-2xl'}`}>
+                <div key={order.id} className={`bg-[#0A0A0A] border rounded-[50px] p-10 transition-all ${order.estado === 'Finalizado' ? 'border-white/5 opacity-70' : 'border-white/10 shadow-2xl'}`}>
                   <div className="flex justify-between items-start mb-6">
                     <div>
-                      <span className={`text-[8px] font-black px-3 py-1 rounded-full uppercase mb-2 inline-block ${order.estado === 'Pendiente' ? 'bg-yellow-500/20 text-yellow-500' : order.estado === 'Pendiente de Pago' ? 'bg-blue-500/20 text-blue-500' : 'bg-green-500/20 text-green-500'}`}>
-                        {order.estado}
-                      </span>
-                      <h3 className="text-2xl font-black uppercase italic">{order.nombre_cliente}</h3>
-                      <p className="text-[9px] text-gray-500 font-bold">{order.telefono_cliente}</p>
+                      <div className="flex items-center gap-2 mb-2">
+                        {/* Estatus del pedido */}
+                        <span className={`text-[8px] font-black px-3 py-1 rounded-full uppercase inline-block ${order.estado === 'Pendiente' ? 'bg-yellow-500/20 text-yellow-500' : order.estado === 'Pendiente de Pago' ? 'bg-blue-500/20 text-blue-500' : 'bg-green-500/20 text-green-500'}`}>
+                          {order.estado}
+                        </span>
+                        {/* ✅ NUEVA ETIQUETA: MÉTODO DE PAGO */}
+                        <span className="text-[8px] font-black px-3 py-1 rounded-full uppercase bg-white/5 text-gray-400">
+                          {order.metodo_pago || 'Efectivo'}
+                        </span>
+                      </div>
+                      
+                      <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente}</h3>
+                      
+                      {/* ✅ NUEVA LÍNEA: HORA DE LA VENTA */}
+                      <p className="text-[9px] text-gray-600 font-black mt-1 uppercase tracking-widest">
+                        {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {order.telefono_cliente}
+                      </p>
                     </div>
-                    <p className="text-xl font-black">{formatCurrency(order.total)}</p>
+                    <div className="text-right">
+                      <p className="text-2xl font-black text-white">{formatCurrency(order.total)}</p>
+                      <p className="text-[8px] text-gray-700 font-bold uppercase mt-1">ID: #{order.id.toString().slice(-4)}</p>
+                    </div>
+                  </div>
+
+                  {/* ✅ LISTA RÁPIDA DE PRODUCTOS (Mini-Ticket) */}
+                  <div className="flex flex-wrap gap-2 mb-6 pt-4 border-t border-white/5">
+                    {order.detalle_pedido?.map((item: any, idx: number) => (
+                      <span key={idx} className="text-[7px] font-black uppercase bg-white/[0.03] px-2 py-1 rounded-md text-gray-500 border border-white/5">
+                        {item.quantity}{item.unidad || 'kg'} {item.nombre}
+                      </span>
+                    ))}
                   </div>
 
                   <div className="flex flex-col gap-4 border-t border-white/5 pt-8">
