@@ -7,20 +7,21 @@ import ClientsModule from './ClientsModule';
 import RutaDeCompra from './RutaDeCompra';
 import InventoryModule from './InventoryModule'; 
 import ReciboModule from './ReciboModule'; 
+import AuditoriaModule from './AuditoriaModule'; // ✅ Importado
 import { Scanner } from './Scanner';
 import { format } from 'date-fns';
 import { 
   Package, LayoutDashboard, ShoppingBag, Users, 
-  BarChart3, Truck, Calculator, X, Clock, creditCard 
+  BarChart3, Truck, Calculator, X, Clock, ShieldCheck 
 } from 'lucide-react';
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo'>('orders');
+  // ✅ Única declaración de VIEW (sin duplicados)
+  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo' | 'auditoria'>('orders');
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
   const [searchTerm, setSearchTerm] = useState('');
-  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo' | 'auditoria'>('orders');
   
   const [showCorteModal, setShowCorteModal] = useState(false);
   const [corteSummary, setCorteSummary] = useState<any>(null);
@@ -141,7 +142,6 @@ export default function AdminOrders() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white pb-32">
-      {/* HEADER DE NAVEGACIÓN TITANIUM */}
       <div className="bg-black/90 p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center sticky top-0 z-[100] backdrop-blur-xl gap-4">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
         
@@ -153,8 +153,8 @@ export default function AdminOrders() {
             { id: 'pos', label: 'Terminal', icon: <Calculator size={14}/> },
             { id: 'clients', label: 'Cartera', icon: <Users size={14}/> },
             { id: 'ruta', label: 'Ruta', icon: <Truck size={14}/> },
-            { id: 'stats', label: 'Métricas', icon: <BarChart3 size={14}/> }
-      { id: 'auditoria', label: 'Auditoría', icon: <ShieldCheck size={14}/> }, // Importa ShieldCheck de lucide-react
+            { id: 'stats', label: 'Métricas', icon: <BarChart3 size={14}/> },
+            { id: 'auditoria', label: 'Auditoría', icon: <ShieldCheck size={14}/> }
           ].map(v => (
             <button 
               key={v.id} 
@@ -168,7 +168,6 @@ export default function AdminOrders() {
       </div>
 
       <div className="max-w-7xl mx-auto p-4 md:p-8">
-        {/* --- RENDER PRINCIPAL (GESTOR DE VISTAS) --- */}
         {view === 'orders' ? (
           <>
             <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-10">
@@ -187,19 +186,14 @@ export default function AdminOrders() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <div className="flex items-center gap-2 mb-2">
-                        {/* Estatus del pedido */}
                         <span className={`text-[8px] font-black px-3 py-1 rounded-full uppercase inline-block ${order.estado === 'Pendiente' ? 'bg-yellow-500/20 text-yellow-500' : order.estado === 'Pendiente de Pago' ? 'bg-blue-500/20 text-blue-500' : 'bg-green-500/20 text-green-500'}`}>
                           {order.estado}
                         </span>
-                        {/* ✅ NUEVA ETIQUETA: MÉTODO DE PAGO */}
                         <span className="text-[8px] font-black px-3 py-1 rounded-full uppercase bg-white/5 text-gray-400">
                           {order.metodo_pago || 'Efectivo'}
                         </span>
                       </div>
-                      
                       <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente}</h3>
-                      
-                      {/* ✅ NUEVA LÍNEA: HORA DE LA VENTA */}
                       <p className="text-[9px] text-gray-600 font-black mt-1 uppercase tracking-widest">
                         {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {order.telefono_cliente}
                       </p>
@@ -210,7 +204,6 @@ export default function AdminOrders() {
                     </div>
                   </div>
 
-                  {/* ✅ LISTA RÁPIDA DE PRODUCTOS (Mini-Ticket) */}
                   <div className="flex flex-wrap gap-2 mb-6 pt-4 border-t border-white/5">
                     {order.detalle_pedido?.map((item: any, idx: number) => (
                       <span key={idx} className="text-[7px] font-black uppercase bg-white/[0.03] px-2 py-1 rounded-md text-gray-500 border border-white/5">
@@ -244,12 +237,13 @@ export default function AdminOrders() {
           <POS onBack={() => setView('orders')} />
         ) : view === 'stats' ? (
           <Dashboard />
+        ) : view === 'auditoria' ? (
+          <AuditoriaModule onBack={() => setView('orders')} />
         ) : (
           <ClientsModule />
         )}
       </div>
 
-      {/* MODAL CORTE DE CAJA */}
       {showCorteModal && corteSummary && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-[#0F0F0F] border border-white/10 rounded-[40px] p-10 w-full max-w-lg relative animate-in zoom-in-95 duration-200">
