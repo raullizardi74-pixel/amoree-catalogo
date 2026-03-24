@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { Scanner } from './Scanner';
-import { Truck, Camera, Save, ArrowLeft, Package, Hash } from 'lucide-react';
+import { Truck, ArrowLeft, Package, Hash } from 'lucide-react';
 
 export default function ReciboModule({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState<'provider' | 'receipt'>('provider');
@@ -86,7 +85,7 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
 
       if (errorCompra) throw errorCompra;
 
-      // ✅ CORRECCIÓN TITANIUM: Ahora sí insertamos producto_id y sku
+      // ✅ REPARACIÓN DE NULLS: Ahora insertamos producto_id y sku obligatoriamente
       for (const d of detallesParaInsertar) {
         await supabase.from('compras_detalle').insert([{
           compra_id: compra.id,
@@ -104,7 +103,7 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
         }).eq('id', d.producto_id);
       }
 
-      alert(`✅ Recibo ${folio} registrado con éxito.`);
+      alert(`✅ Recibo ${folio} registrado. Stock de Amoree actualizado.`);
       onBack();
     } catch (e: any) {
       alert("Error: " + e.message);
@@ -137,14 +136,14 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
         <div className="flex items-center gap-4 w-full md:w-auto">
           <div>
             <h2 className="text-2xl font-black uppercase italic leading-none">{selectedProvider.nombre}</h2>
-            <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase mt-1">Sincronización de Stock Activa</p>
+            <p className="text-[9px] text-green-500 font-black tracking-[0.3em] uppercase mt-1">Sincronización de Inventario</p>
           </div>
           <div className="flex-1 md:w-48 bg-white/5 p-3 rounded-2xl border border-white/10">
             <input type="text" value={folio} onChange={(e) => setFolio(e.target.value)} placeholder="FOLIO / NOTA" className="bg-transparent text-white font-black outline-none w-full text-xs uppercase" />
           </div>
         </div>
         <button onClick={saveReceipt} disabled={loading} className="w-full md:w-auto bg-green-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all">
-          {loading ? 'Guardando...' : 'Finalizar Recibo'}
+          {loading ? 'Sincronizando...' : 'Finalizar Recibo'}
         </button>
       </div>
 
@@ -154,7 +153,7 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
               <div>
                 <h4 className="text-[11px] font-black uppercase text-white leading-tight">{p.nombre}</h4>
-                <p className="text-[9px] text-gray-600 font-bold uppercase mt-1">Stock Actual: {p.stock_actual} {p.unidad}</p>
+                <p className="text-[9px] text-gray-600 font-bold uppercase mt-1">Stock: {p.stock_actual} {p.unidad}</p>
               </div>
               <div className="grid grid-cols-2 gap-4 col-span-2">
                 <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
@@ -162,7 +161,7 @@ export default function ReciboModule({ onBack }: { onBack: () => void }) {
                   <input type="number" placeholder={p.costo.toString()} className="w-full bg-transparent text-sm font-black text-white outline-none" onChange={(e) => handleInputChange(p.id, 'nuevoCosto', e.target.value)} />
                 </div>
                 <div className="bg-green-500/5 p-4 rounded-2xl border border-green-500/10">
-                  <label className="text-[7px] text-green-500/50 uppercase block mb-1">Cantidad a Recibir</label>
+                  <label className="text-[7px] text-green-500/50 uppercase block mb-1">Cantidad Recibida</label>
                   <input type="number" placeholder="+ 0" className="w-full bg-transparent text-xl font-black text-green-500 outline-none" onChange={(e) => handleInputChange(p.id, 'cantidad', e.target.value)} />
                 </div>
               </div>
