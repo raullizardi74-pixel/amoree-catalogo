@@ -7,7 +7,7 @@ import ClientsModule from './ClientsModule';
 import RutaDeCompra from './RutaDeCompra';
 import InventoryModule from './InventoryModule'; 
 import ReciboModule from './ReciboModule'; 
-import AuditoriaModule from './AuditoriaModule'; // ✅ Importado
+import AuditoriaModule from './AuditoriaModule';
 import { Scanner } from './Scanner';
 import { format } from 'date-fns';
 import { 
@@ -18,13 +18,16 @@ import {
 export default function AdminOrders() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  // ✅ Única declaración de VIEW (sin duplicados)
   const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo' | 'auditoria'>('orders');
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
   const [searchTerm, setSearchTerm] = useState('');
   
+  // ✅ ESTADOS PARA EL CORTE DE CAJA DE ENVIDIA
   const [showCorteModal, setShowCorteModal] = useState(false);
   const [corteSummary, setCorteSummary] = useState<any>(null);
+  const [fondoCaja, setFondoCaja] = useState(1500); // Fondo inicial sugerido
+  const [gastosProveedores, setGastosProveedores] = useState(0);
+  const [efectivoFisico, setEfectivoFisico] = useState(0);
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -103,6 +106,7 @@ export default function AdminOrders() {
     }
   };
 
+  // ✅ FUNCIÓN CORTE DE CAJA MEJORADA
   const prepararCorte = () => {
     const hoy = new Date().toLocaleDateString();
     const ventasHoy = orders.filter(o => 
@@ -113,22 +117,49 @@ export default function AdminOrders() {
     const resumen = ventasHoy.reduce((acc, o) => {
       const metodo = o.metodo_pago || 'Efectivo';
       acc[metodo] = (acc[metodo] || 0) + o.total;
-      acc['Total'] = (acc['Total'] || 0) + o.total;
+      acc['TotalVentas'] = (acc['TotalVentas'] || 0) + o.total;
       return acc;
-    }, { 'Efectivo': 0, 'Transferencia': 0, 'Terminal': 0, 'A Cuenta': 0, 'Total': 0 } as any);
+    }, { 'Efectivo': 0, 'Transferencia': 0, 'Terminal': 0, 'A Cuenta': 0, 'TotalVentas': 0 } as any);
 
-    setCorteSummary({ ...resumen, cantidad: ventasHoy.length });
+    // Efectivo Esperado = Fondo + Ventas Efectivo - Gastos
+    const esperado = fondoCaja + resumen['Efectivo'] - gastosProveedores;
+
+    setCorteSummary({ 
+      ...resumen, 
+      cantidad: ventasHoy.length,
+      esperado: esperado
+    });
     setShowCorteModal(true);
   };
 
   const enviarCorteWA = () => {
-    const fecha = format(new Date(), 'dd/MM/yyyy');
-    let msg = `*AMOREE - CORTE DE CAJA* 🏦\n*Fecha:* ${fecha}\n--------------------------\n`;
-    msg += `💵 Efectivo: *${formatCurrency(corteSummary.Efectivo)}*\n🏦 Transf: *${formatCurrency(corteSummary.Transferencia)}*\n`;
-    msg += `💳 Terminal: *${formatCurrency(corteSummary.Terminal)}*\n📑 A Cuenta: *${formatCurrency(corteSummary['A Cuenta'])}*\n--------------------------\n`;
-    msg += `💰 *TOTAL DÍA: ${formatCurrency(corteSummary.Total)}*\n📦 Pedidos: ${corteSummary.cantidad}\n\n🚀 *Automatiza con Raul*`;
+    const fecha = format(new Date(), 'dd/MM/yyyy HH:mm');
+    const dif = efectivoFisico - corteSummary.esperado;
+    
+    let msg = `*AMOREE - CORTE DE CAJA* 🏦\n`;
+    msg += `*Fecha:* ${fecha}\n`;
+    msg += `--------------------------\n`;
+    msg += `💰 Fondo Inicial: *${formatCurrency(fondoCaja)}*\n`;
+    msg += `💵 Ventas Efectivo: *${formatCurrency(corteSummary.Efectivo)}*\n`;
+    msg += `💸 Pagos Locales: *-${formatCurrency(gastosProveedores)}*\n`;
+    msg += `--------------------------\n`;
+    msg += `🎯 *EFECTIVO ESPERADO: ${formatCurrency(corteSummary.esperado)}*\n`;
+    msg += `✋ *EFECTIVO FÍSICO: ${formatCurrency(efectivoFisico)}*\n`;
+    
+    if (dif !== 0) {
+      msg += `${dif < 0 ? '⚠️ FALTANTE:' : '✅ SOBRANTE:'} *${formatCurrency(dif)}*\n`;
+    } else {
+      msg += `💎 *CAJA CUADRADA PERFECTA*\n`;
+    }
 
-    sendWA("52XXXXXXXXXX", msg); 
+    msg += `--------------------------\n`;
+    msg += `💳 Terminal: ${formatCurrency(corteSummary.Terminal || 0)}\n`;
+    msg += `🏦 Transf: ${formatCurrency(corteSummary.Transferencia || 0)}\n`;
+    msg += `📑 A Cuenta: ${formatCurrency(corteSummary['A Cuenta'] || 0)}\n`;
+    msg += `🚀 *Total Ventas: ${formatCurrency(corteSummary.TotalVentas)}*\n\n`;
+    msg += `*Automatiza con Raul*`;
+
+    sendWA("52XXXXXXXXXX", msg); // Reemplazar con el número de Hugo
     setShowCorteModal(false);
   };
 
@@ -244,24 +275,61 @@ export default function AdminOrders() {
         )}
       </div>
 
+      {/* ✅ MODAL CORTE DE CAJA DE ENVIDIA */}
       {showCorteModal && corteSummary && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="bg-[#0F0F0F] border border-white/10 rounded-[40px] p-10 w-full max-w-lg relative animate-in zoom-in-95 duration-200">
-            <button onClick={() => setShowCorteModal(false)} className="absolute top-8 right-8 text-gray-500"><X/></button>
-            <h2 className="text-3xl font-black uppercase italic text-blue-500 mb-8">Resumen de Corte</h2>
-            <div className="space-y-4 mb-10">
-              {['Efectivo', 'Transferencia', 'Terminal', 'A Cuenta'].map(m => (
-                <div key={m} className="flex justify-between items-center bg-white/[0.03] p-4 rounded-2xl border border-white/5">
-                  <span className="text-[10px] font-black text-gray-400 uppercase">{m}</span>
-                  <span className="text-lg font-black">{formatCurrency(corteSummary[m])}</span>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-in zoom-in-95 duration-300">
+          <div className="bg-[#0A0A0A] border border-white/10 rounded-[60px] p-10 w-full max-w-2xl relative shadow-2xl">
+            <button onClick={() => setShowCorteModal(false)} className="absolute top-10 right-10 text-gray-500 hover:text-white"><X/></button>
+            
+            <div className="text-center mb-8">
+              <h2 className="text-3xl font-black uppercase italic text-blue-500">Corte de Caja</h2>
+              <p className="text-[9px] text-gray-600 font-black uppercase tracking-[0.3em] mt-1 italic">Validación de Flujo Físico</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+              <div className="space-y-4">
+                <div className="bg-black/50 p-4 rounded-3xl border border-white/5">
+                  <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
+                  <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-xl font-black text-white outline-none w-full" />
                 </div>
-              ))}
-              <div className="flex justify-between items-center bg-blue-600/10 p-6 rounded-3xl border border-blue-500/30 mt-6">
-                <span className="text-xs font-black uppercase">Ventas Totales</span>
-                <span className="text-3xl font-black text-blue-400">{formatCurrency(corteSummary.Total)}</span>
+                <div className="bg-red-600/5 p-4 rounded-3xl border border-red-500/20">
+                  <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Pagos Locales (Salida)</label>
+                  <input type="number" value={gastosProveedores} onChange={(e) => setGastosProveedores(Number(e.target.value))} className="bg-transparent text-xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
+                </div>
+                <div className="bg-green-600/5 p-4 rounded-3xl border border-green-500/20">
+                  <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico (Contado)</label>
+                  <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
+                </div>
+              </div>
+
+              <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 flex flex-col justify-center">
+                <p className="text-[9px] font-black text-gray-500 uppercase mb-1">Efectivo Esperado</p>
+                <p className="text-2xl font-black mb-6">{formatCurrency(fondoCaja + corteSummary.Efectivo - gastosProveedores)}</p>
+                
+                <p className="text-[9px] font-black text-gray-500 uppercase mb-1">Diferencia</p>
+                <p className={`text-4xl font-black italic tracking-tighter ${efectivoFisico - (fondoCaja + corteSummary.Efectivo - gastosProveedores) < 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                  {formatCurrency(efectivoFisico - (fondoCaja + corteSummary.Efectivo - gastosProveedores))}
+                </p>
+                <p className="text-[7px] text-gray-600 uppercase font-black mt-2">
+                  {efectivoFisico - (fondoCaja + corteSummary.Efectivo - gastosProveedores) === 0 ? '💎 Caja Cuadrada' : '⚠️ Revisar transacciones'}
+                </p>
               </div>
             </div>
-            <button onClick={enviarCorteWA} className="w-full bg-white text-black py-5 rounded-2xl font-black uppercase tracking-widest text-[11px]">Confirmar y Enviar</button>
+
+            <div className="grid grid-cols-2 gap-4 mb-10">
+               <div className="p-4 bg-black rounded-2xl border border-white/5 text-center">
+                  <p className="text-[7px] text-gray-500 uppercase font-black">Ventas Tarjeta</p>
+                  <p className="text-sm font-black text-blue-400">{formatCurrency(corteSummary.Terminal || 0)}</p>
+               </div>
+               <div className="p-4 bg-black rounded-2xl border border-white/5 text-center">
+                  <p className="text-[7px] text-gray-500 uppercase font-black">Transferencias</p>
+                  <p className="text-sm font-black text-purple-400">{formatCurrency(corteSummary.Transferencia || 0)}</p>
+               </div>
+            </div>
+
+            <button onClick={enviarCorteWA} className="w-full bg-white text-black py-6 rounded-[30px] font-black uppercase tracking-[0.3em] text-[11px] active:scale-95 transition-all shadow-2xl">
+              Confirmar y Enviar Reporte
+            </button>
           </div>
         </div>
       )}
