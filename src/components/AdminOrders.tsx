@@ -20,6 +20,7 @@ export default function AdminOrders() {
   const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo'>('orders');
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
   const [searchTerm, setSearchTerm] = useState('');
+  const [view, setView] = useState<'orders' | 'stats' | 'pos' | 'clients' | 'ruta' | 'inventory' | 'recibo' | 'auditoria'>('orders');
   
   const [showCorteModal, setShowCorteModal] = useState(false);
   const [corteSummary, setCorteSummary] = useState<any>(null);
@@ -153,6 +154,7 @@ export default function AdminOrders() {
             { id: 'clients', label: 'Cartera', icon: <Users size={14}/> },
             { id: 'ruta', label: 'Ruta', icon: <Truck size={14}/> },
             { id: 'stats', label: 'Métricas', icon: <BarChart3 size={14}/> }
+      { id: 'auditoria', label: 'Auditoría', icon: <ShieldCheck size={14}/> }, // Importa ShieldCheck de lucide-react
           ].map(v => (
             <button 
               key={v.id} 
