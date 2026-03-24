@@ -25,8 +25,9 @@ export default function AuditoriaModule({ onBack }: { onBack: () => void }) {
   const fetchAuditData = async () => {
     setLoading(true);
     try {
-      const inicio = startOfDay(new Date(range.start)).toISOString();
-      const fin = endOfDay(new Date(range.end)).toISOString();
+      // Forzamos el horario local de Cholula
+const inicio = new Date(range.start + 'T00:00:00').toISOString();
+const fin = new Date(range.end + 'T23:59:59').toISOString();
 
       const { data: p } = await supabase.from('pedidos')
         .select('*')
