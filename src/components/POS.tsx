@@ -34,7 +34,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
     setLoading(false);
   };
 
-  // ✅ MAGIA 1: Cálculo de Stock Disponible en Tiempo Real
   const productsWithAvailableStock = useMemo(() => {
     return products.map(p => {
       const inCart = cart.find(item => item.id === p.id)?.quantity || 0;
@@ -46,29 +45,39 @@ export default function POS({ onBack }: { onBack: () => void }) {
     if (product.available <= 0) return;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
-      if (existing) return prev; // Si ya está, mejor que Hugo edite el peso en el carrito
+      if (existing) return prev; 
       return [...prev, { ...product, quantity: 1 }];
     });
   };
 
-  // ✅ MAGIA 2: Soporte para Decimales (Peso exacto)
+  // ✅ SOLUCIÓN AL BUG: Función dedicada para eliminar artículos
+  const removeFromCart = (id: number) => {
+    setCart(prev => prev.filter(item => item.id !== id));
+  };
+
+  // ✅ SOLUCIÓN AL BUG: updateQuantity ahora permite el '0' sin borrar
   const updateQuantity = (id: number, value: string) => {
     const numValue = parseFloat(value);
-    if (isNaN(numValue) && value !== '') return;
+    
+    // Si el campo está vacío o no es un número, mantenemos el ítem con 0 para que Hugo siga escribiendo
+    if (value === '' || isNaN(numValue)) {
+      setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: 0 } : item));
+      return;
+    }
 
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         const pRef = products.find(p => p.id === id);
         const maxStock = pRef?.stock_actual || 0;
-        // Validamos que no exceda el stock físico
+        // No dejamos que Hugo venda más de lo que hay, pero permitimos el 0
         const finalQty = numValue > maxStock ? maxStock : numValue;
         return { ...item, quantity: finalQty };
       }
       return item;
-    }).filter(item => item.quantity > 0 || value === ''));
+    }));
   };
 
-  const total = cart.reduce((sum, item) => sum + (item.precio_venta * (item.quantity || 0)), 0);
+  const total = cart.reduce((sum, item) => sum + (item.precio_venta * (Number(item.quantity) || 0)), 0);
 
   const finalizarVenta = async () => {
     if (cart.length === 0 || isSubmitting) return;
@@ -77,7 +86,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
       let clienteFinal = { nombre: 'PÚBLICO GENERAL', telefono: '', id: null, saldo: 0 };
       if (!isAnonymous && selectedClient) clienteFinal = selectedClient;
 
-      // Registro Pedido
       const { error: errPedido } = await supabase.from('pedidos').insert([{
         usuario_email: user?.email,
         nombre_cliente: clienteFinal.nombre,
@@ -99,7 +107,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
       if (errPedido) throw errPedido;
 
-      // Actualizar Stock Real
       for (const item of cart) {
         const pRef = products.find(p => p.id === item.id);
         await supabase.from('productos').update({ stock_actual: (pRef?.stock_actual || 0) - item.quantity }).eq('id', item.id);
@@ -114,7 +121,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 min-h-screen p-4 bg-black text-white font-sans">
-      {/* CUADRÍCULA DE PRODUCTOS */}
       <div className="flex-1">
         <div className="flex justify-between items-center mb-6">
           <button onClick={onBack} className="bg-white/5 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/5">← Salir</button>
@@ -143,7 +149,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* CARRITO DE PRECISIÓN */}
       <div className="w-full lg:w-[480px]">
         <div className="bg-[#0A0A0A] border border-white/10 rounded-[60px] p-10 sticky top-6 shadow-2xl flex flex-col h-[85vh]">
           <div className="flex justify-between items-center mb-8 px-2">
@@ -159,13 +164,13 @@ export default function POS({ onBack }: { onBack: () => void }) {
                     <p className="text-xs font-black uppercase text-white mb-1 leading-none">{item.nombre}</p>
                     <p className="text-[9px] text-gray-500 font-bold uppercase">{formatCurrency(item.precio_venta)} / {item.unidad || 'kg'}</p>
                   </div>
-                  <button onClick={() => updateQuantity(item.id, '0')} className="text-gray-700 hover:text-red-500 transition-colors"><X size={16}/></button>
+                  {/* ✅ BOTÓN X: Ahora usa removeFromCart específicamente */}
+                  <button onClick={() => removeFromCart(item.id)} className="text-gray-700 hover:text-red-500 transition-colors"><X size={16}/></button>
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
                    <div className="flex items-center bg-black rounded-2xl border border-white/10 px-4 py-2 flex-1">
                       <Scale size={14} className="text-gray-600 mr-3" />
-                      {/* ✅ INPUT DE PESO MANUAL (Hugo puede escribir 1.250) */}
                       <input 
                         type="number" step="0.001" value={item.quantity} 
                         onChange={(e) => updateQuantity(item.id, e.target.value)}
@@ -175,7 +180,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
                    </div>
                    <div className="text-right">
                      <p className="text-[8px] text-gray-600 uppercase font-black mb-1">Subtotal</p>
-                     <p className="text-lg font-black text-white">{formatCurrency(item.precio_venta * (item.quantity || 0))}</p>
+                     <p className="text-lg font-black text-white">{formatCurrency(item.precio_venta * (Number(item.quantity) || 0))}</p>
                    </div>
                 </div>
               </div>
@@ -192,23 +197,20 @@ export default function POS({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* MODAL DE PAGO (Mantiene la lógica de Privacidad que te di antes) */}
       {showPaymentModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
           <div className="bg-[#0A0A0A] border border-white/10 rounded-[60px] p-12 w-full max-w-xl shadow-2xl relative">
             <button onClick={() => setShowPaymentModal(false)} className="absolute top-10 right-10 text-gray-500 hover:text-white"><X /></button>
             <h3 className="text-3xl font-black uppercase italic tracking-tighter mb-8 text-center">Finalizar <span className="text-green-500">Operación</span></h3>
 
-            {/* PRIVACIDAD */}
             <div className="flex bg-black p-2 rounded-[25px] border border-white/10 mb-8">
               <button onClick={() => { setIsAnonymous(true); setSelectedClient(null); setMetodoPago('Efectivo'); }} className={`flex-1 py-4 rounded-[20px] text-[10px] font-black uppercase flex items-center justify-center gap-2 transition-all ${isAnonymous ? 'bg-white text-black' : 'text-gray-500'}`}><ShieldOff size={14}/> Anónimo</button>
               <button onClick={() => setIsAnonymous(false)} className={`flex-1 py-4 rounded-[20px] text-[10px] font-black uppercase flex items-center justify-center gap-2 transition-all ${!isAnonymous ? 'bg-green-600 text-white shadow-lg' : 'text-gray-500'}`}><UserCheck size={14}/> Cliente</button>
             </div>
 
-            {/* SELECCIÓN CLIENTE (Simplificada) */}
             {!isAnonymous && (
               <div className="mb-10">
-                <input type="text" placeholder="BUSCAR CLIENTE..." value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl p-5 font-black uppercase text-xs mb-2" />
+                <input type="text" placeholder="BUSCAR CLIENTE..." value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl p-5 font-black uppercase text-xs mb-2 outline-none focus:border-green-500" />
                 <div className="max-h-32 overflow-y-auto no-scrollbar">
                   {clientes.filter(c => c.nombre.toLowerCase().includes(clientSearch.toLowerCase())).map(c => (
                     <button key={c.id} onClick={() => {setSelectedClient(c); setClientSearch(c.nombre);}} className={`w-full p-4 text-left border-b border-white/5 text-[10px] uppercase font-black ${selectedClient?.id === c.id ? 'text-green-500' : 'text-gray-500'}`}>{c.nombre}</button>
@@ -217,7 +219,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
               </div>
             )}
 
-            {/* MÉTODOS */}
             <div className="grid grid-cols-2 gap-4 mb-10">
               {['Efectivo', 'Tarjeta', 'Transferencia', 'A Cuenta'].map(m => (
                 <button key={m} disabled={isAnonymous && m === 'A Cuenta'} onClick={() => setMetodoPago(m as any)} className={`p-6 rounded-[30px] border flex flex-col items-center gap-2 transition-all ${metodoPago === m ? 'bg-green-600 border-green-600 text-white' : 'bg-black border-white/5 text-gray-600'}`}>
