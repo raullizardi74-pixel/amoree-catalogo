@@ -12,7 +12,7 @@ import { Scanner } from './Scanner';
 import { format, startOfDay, endOfDay } from 'date-fns';
 import { 
   Package, LayoutDashboard, ShoppingBag, Users, 
-  BarChart3, Truck, Calculator, X, Clock, ShieldCheck, Search, Scale
+  BarChart3, Truck, Calculator, X, Clock, ShieldCheck, Search
 } from 'lucide-react';
 
 export default function AdminOrders() {
@@ -23,7 +23,6 @@ export default function AdminOrders() {
   const [orderTab, setOrderTab] = useState<'whatsapp' | 'terminal' | 'pagos'>('whatsapp');
   const [searchTerm, setSearchTerm] = useState('');
   
-  // ✅ ESTADOS DEL CORTE MAESTRO
   const [showCorteModal, setShowCorteModal] = useState(false);
   const [corteSummary, setCorteSummary] = useState<any>(null);
   const [fondoCaja, setFondoCaja] = useState(1500); 
@@ -114,28 +113,16 @@ export default function AdminOrders() {
 
   const prepararCorte = () => {
     const hoyStr = new Date().toLocaleDateString();
-    
-    // Solo ventas finalizadas en efectivo para el cálculo del cajón
     const ventasEfectivoHoy = orders.filter(o => 
       new Date(o.created_at).toLocaleDateString() === hoyStr && 
       o.estado === 'Finalizado' &&
       (o.metodo_pago === 'Efectivo' || !o.metodo_pago)
     ).reduce((acc, o) => acc + o.total, 0);
 
-    // Resumen de otros métodos (para información)
-    const otrosMetodos = orders.filter(o => 
-      new Date(o.created_at).toLocaleDateString() === hoyStr && o.estado === 'Finalizado'
-    ).reduce((acc: any, o) => {
-      const m = o.metodo_pago || 'Efectivo';
-      acc[m] = (acc[m] || 0) + o.total;
-      return acc;
-    }, { 'Efectivo': 0, 'Transferencia': 0, 'Terminal': 0, 'A Cuenta': 0 });
-
     const totalRecibos = comprasHoy.reduce((acc, curr) => acc + Number(curr.total), 0);
     const esperado = fondoCaja + ventasEfectivoHoy - totalRecibos - otrosGastos;
 
     setCorteSummary({ 
-      ...otrosMetodos,
       ventasEfectivo: ventasEfectivoHoy,
       totalRecibos: totalRecibos,
       esperado: esperado,
@@ -170,7 +157,6 @@ export default function AdminOrders() {
     <div className="min-h-screen bg-[#050505] text-white pb-32">
       <div className="bg-black/90 p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center sticky top-0 z-[100] backdrop-blur-xl gap-4">
         <h1 className="text-xl font-black uppercase italic tracking-tighter">Amoree <span className="text-green-500">Business OS</span></h1>
-        
         <div className="flex bg-white/5 p-1 rounded-2xl gap-1 overflow-x-auto no-scrollbar w-full md:w-auto">
           {[
             { id: 'orders', label: 'Pedidos', icon: <ShoppingBag size={14}/> },
@@ -260,59 +246,46 @@ export default function AdminOrders() {
           : <ClientsModule />}
       </div>
 
-    {/* ✅ MODAL CORTE MAESTRO: VERSIÓN RESPONSIVE CON SCROLL */}
-{showCorteModal && corteSummary && (
-  <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/95 backdrop-blur-xl overflow-y-auto">
-    <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8 my-auto">
-      <button onClick={() => setShowCorteModal(false)} className="absolute top-6 right-6 md:top-10 md:right-10 text-gray-500 hover:text-white z-10"><X/></button>
-      
-      {/* SECCIÓN DE CAPTURA */}
-      <div className="flex-1 space-y-4 md:space-y-6">
-        <h2 className="text-2xl md:text-3xl font-black uppercase italic text-blue-500 mb-4 md:mb-8">Corte Maestro</h2>
-        
-        <div className="bg-black/50 p-4 md:p-6 rounded-3xl border border-white/5">
-          <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
-          <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-xl font-black text-white outline-none w-full" />
-        </div>
-
-        <div className="bg-white/[0.02] p-4 md:p-6 rounded-3xl border border-white/5">
-          <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest italic">Pagos Automáticos Detectados</p>
-          <div className="space-y-3 max-h-32 overflow-y-auto no-scrollbar">
-            {corteSummary.detallesRecibos.map((r: any) => (
-              <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase border-b border-white/5 pb-2">
-                <span className="text-gray-500 truncate mr-2">🚚 {r.proveedores?.nombre || 'Proveedor'}</span>
-                <span className="text-red-500 shrink-0">-{formatCurrency(r.total)}</span>
+      {showCorteModal && corteSummary && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-2 sm:p-4 bg-black/95 backdrop-blur-xl overflow-y-auto no-scrollbar">
+          <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8 my-auto">
+            <button onClick={() => setShowCorteModal(false)} className="absolute top-6 right-6 md:top-10 md:right-10 text-gray-500 hover:text-white z-10"><X/></button>
+            <div className="flex-1 space-y-4 md:space-y-6">
+              <h2 className="text-2xl md:text-3xl font-black uppercase italic text-blue-500 mb-4 md:mb-8">Corte Maestro</h2>
+              <div className="bg-black/50 p-4 md:p-6 rounded-3xl border border-white/5">
+                <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
+                <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-xl font-black text-white outline-none w-full" />
               </div>
-            ))}
-            {corteSummary.detallesRecibos.length === 0 && <p className="text-[9px] text-gray-700 italic">No hay recibos registrados hoy</p>}
+              <div className="bg-white/[0.02] p-4 md:p-6 rounded-3xl border border-white/5">
+                <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest italic">Pagos Automáticos Detectados</p>
+                <div className="space-y-3 max-h-32 overflow-y-auto no-scrollbar">
+                  {corteSummary.detallesRecibos.map((r: any) => (
+                    <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase border-b border-white/5 pb-2">
+                      <span className="text-gray-500 truncate mr-2">🚚 {r.proveedores?.nombre || 'Proveedor'}</span>
+                      <span className="text-red-500 shrink-0">-{formatCurrency(r.total)}</span>
+                    </div>
+                  ))}
+                  {corteSummary.detallesRecibos.length === 0 && <p className="text-[9px] text-gray-700 italic">No hay recibos registrados hoy</p>}
+                </div>
+              </div>
+              <div className="bg-red-600/5 p-4 md:p-6 rounded-3xl border border-red-500/20">
+                <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Otros Gastos (Sin Recibo)</label>
+                <input type="number" value={otrosGastos} onChange={(e) => setOtrosGastos(Number(e.target.value))} className="bg-transparent text-xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
+              </div>
+              <div className="bg-green-600/5 p-4 md:p-6 rounded-3xl border border-green-500/20">
+                <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico (Contado)</label>
+                <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
+              </div>
+            </div>
+            <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-8 md:p-10 flex flex-col justify-center text-center">
+              <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Efectivo Esperado</p>
+              <p className="text-2xl md:text-3xl font-black mb-6 md:mb-10">{formatCurrency(corteSummary.esperado)}</p>
+              <p className={`text-4xl md:text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>{formatCurrency(efectivoFisico - corteSummary.esperado)}</p>
+              <button onClick={enviarCorteWA} className="mt-8 md:mt-12 w-full bg-white text-black py-5 md:py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">Confirmar y Enviar</button>
+            </div>
           </div>
         </div>
-
-        <div className="bg-red-600/5 p-4 md:p-6 rounded-3xl border border-red-500/20">
-          <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Otros Gastos (Sin Recibo)</label>
-          <input type="number" value={otrosGastos} onChange={(e) => setOtrosGastos(Number(e.target.value))} className="bg-transparent text-xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
-        </div>
-
-        <div className="bg-green-600/5 p-4 md:p-6 rounded-3xl border border-green-500/20">
-          <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico (Contado)</label>
-          <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl md:text-4xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
-        </div>
-      </div>
-
-      {/* RESULTADOS Y CIERRE */}
-      <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-8 md:p-10 flex flex-col justify-center text-center">
-        <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Esperado</p>
-        <p className="text-2xl md:text-3xl font-black mb-6 md:mb-10">{formatCurrency(corteSummary.esperado)}</p>
-        
-        <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Diferencia</p>
-        <p className={`text-4xl md:text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>
-          {formatCurrency(efectivoFisico - corteSummary.esperado)}
-        </p>
-        
-        <button onClick={enviarCorteWA} className="mt-8 md:mt-12 w-full bg-white text-black py-5 md:py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">
-          Cerrar Día y Enviar
-        </button>
-      </div>
+      )}
     </div>
-  </div>
-)}
+  );
+}
