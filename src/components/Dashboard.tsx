@@ -60,7 +60,6 @@ export default function Dashboard() {
       
       if (resProvs.data && resComps.data) {
         const resumen = resProvs.data.map(prov => {
-          // ✅ FILTRO TITANIUM: Agrupa notas por ID o por coincidencia de nombre (Central)
           const notasProv = resComps.data.filter(c => {
             const matchId = c.proveedor_id === prov.id;
             const esAbastoManual = prov.id === 1 && (
