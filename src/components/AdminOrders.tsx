@@ -8,6 +8,7 @@ import RutaDeCompra from './RutaDeCompra';
 import InventoryModule from './InventoryModule'; 
 import ReciboModule from './ReciboModule'; 
 import AuditoriaModule from './AuditoriaModule';
+import { Scanner } from './Scanner';
 import { format } from 'date-fns';
 import { 
   Package, LayoutDashboard, ShoppingBag, Users, 
@@ -29,36 +30,37 @@ export default function AdminOrders() {
   const [otrosGastos, setOtrosGastos] = useState(0); 
   const [efectivoFisico, setEfectivoFisico] = useState(0);
 
-  // 🛡️ MAGIA TITANIUM: Cálculo de rango de fecha en horario México (UTC-6)
-  const getMexicoTimeRange = () => {
-    // Obtenemos la fecha actual en formato YYYY-MM-DD para México
-    const hoyMX = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Mexico_City',
-      year: 'numeric', month: '2-digit', day: '2-digit'
-    }).format(new Date());
+  // 🛡️ LÓGICA TITANIUM: Rango de Fecha exacto para México (UTC-6)
+  const getMexicoRange = () => {
+    // Calculamos la fecha actual en la zona horaria de México
+    const mxDate = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Mexico_City"}));
+    const y = mxDate.getFullYear();
+    const m = String(mxDate.getMonth() + 1).padStart(2, '0');
+    const d = String(mxDate.getDate()).padStart(2, '0');
+    const base = `${y}-${m}-${d}`;
 
-    // Creamos el inicio y fin del día forzando el desfase de México (-06:00)
-    // Esto asegura que Supabase reciba el UTC correcto sin importar dónde esté el servidor
-    const inicio = `${hoyMX}T00:00:00-06:00`;
-    const fin = `${hoyMX}T23:59:59-06:00`;
-
-    return { inicio, fin };
+    return {
+      inicio: `${base}T00:00:00-06:00`,
+      fin: `${base}T23:59:59-06:00`,
+      hoyLegible: `${d}/${m}/${y}`
+    };
   };
 
+  // ✅ FILTRO GLOBAL: Solo carga lo que ha pasado en el "Hoy" de México
   const fetchData = async () => {
     setLoading(true);
-    const { inicio, fin } = getMexicoTimeRange();
+    const { inicio, fin } = getMexicoRange();
 
-    // 1. Pedidos: Solo los de HOY (Global)
+    // 1. Pedidos del día
     const { data: p } = await supabase.from('pedidos')
       .select('*')
       .gte('created_at', inicio)
       .lte('created_at', fin)
       .order('created_at', { ascending: false });
 
-    // 2. Compras/Recibos: Solo los de HOY para el Corte (FEMSA, Central, etc.)
+    // 2. Compras/Recibos del día (FEMSA, Central, etc.)
     const { data: c } = await supabase.from('compras')
-      .select('*, proveedores(nombre)')
+      .select('*, proveedores(nombre)') // Si falla el join, jala el texto de 'proveedor'
       .gte('created_at', inicio)
       .lte('created_at', fin);
 
@@ -71,29 +73,24 @@ export default function AdminOrders() {
 
   const sendWA = (telefono: string, mensaje: string) => {
     const cleanTel = telefono.match(/(\d{10})/)?.[1];
-    if (cleanTel) {
-      window.open(`https://wa.me/52${cleanTel}?text=${encodeURIComponent(mensaje)}`, '_blank');
-    }
+    if (cleanTel) window.open(`https://wa.me/52${cleanTel}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
-  const handleDeliver = async (order: any) => {
-    const { error } = await supabase.from('pedidos').update({ estado: 'Finalizado' }).eq('id', order.id);
-    if (!error) {
-      // Descontar stock (lógica simplificada para este bloque)
-      fetchData();
-    }
-  };
-
-  const prepararCorte = () => {
-    // Ventas Finalizadas en Efectivo de Hoy
+  // ✅ PREPARAR CORTE: Ahora es asíncrono para asegurar datos frescos
+  const prepararCorte = async () => {
+    await fetchData(); // Refrescamos antes de abrir para atrapar el último recibo
+    const { inicio, fin } = getMexicoRange();
+    
+    // Ventas de Hoy en Efectivo
     const ventasEfectivoHoy = orders.filter(o => 
       o.estado === 'Finalizado' && (o.metodo_pago === 'Efectivo' || !o.metodo_pago)
     ).reduce((acc, o) => acc + o.total, 0);
 
-    // Sumamos Compras/Recibos de Hoy (Cualquier columna que tenga el total)
-    const totalRecibos = comprasHoy.reduce((acc, curr) => acc + (Number(curr.total) || Number(curr.total_compra) || 0), 0);
-    
-    // El Efectivo que DEBE haber en caja
+    // Sumamos Recibos de Hoy (buscando en total o total_compra)
+    const totalRecibos = comprasHoy.reduce((acc, curr) => 
+      acc + (Number(curr.total) || Number(curr.total_compra) || 0), 0
+    );
+
     const esperado = fondoCaja + ventasEfectivoHoy - totalRecibos - otrosGastos;
 
     setCorteSummary({ 
@@ -106,16 +103,16 @@ export default function AdminOrders() {
   };
 
   const enviarCorteWA = () => {
-    const fecha = format(new Date(), 'dd/MM/yyyy HH:mm');
+    const { hoyLegible } = getMexicoRange();
     const dif = efectivoFisico - corteSummary.esperado;
-    let msg = `*AMOREE - CORTE MAESTRO* 🏦\n*Fecha:* ${fecha}\n--------------------------\n`;
+    let msg = `*AMOREE - CORTE MAESTRO* 🏦\n*Fecha:* ${hoyLegible}\n--------------------------\n`;
     msg += `💰 Fondo Inicial: *${formatCurrency(fondoCaja)}*\n💵 Ventas Efectivo: *${formatCurrency(corteSummary.ventasEfectivo)}*\n🚚 Pagos Recibos: *-${formatCurrency(corteSummary.totalRecibos)}*\n`;
     if(otrosGastos > 0) msg += `📝 Otros Gastos: *-${formatCurrency(otrosGastos)}*\n`;
     msg += `--------------------------\n🎯 *ESPERADO: ${formatCurrency(corteSummary.esperado)}*\n✋ *FÍSICO: ${formatCurrency(efectivoFisico)}*\n`;
     msg += `--------------------------\n`;
     msg += dif < 0 ? `⚠️ FALTANTE: *${formatCurrency(dif)}*` : dif > 0 ? `✅ SOBRANTE: *${formatCurrency(dif)}*` : `💎 CAJA CUADRADA`;
     
-    sendWA("52XXXXXXXXXX", msg); // Número de Hugo
+    sendWA("52XXXXXXXXXX", msg); 
     setShowCorteModal(false);
   };
 
@@ -167,7 +164,7 @@ export default function AdminOrders() {
             </div>
 
             {loading ? (
-              <div className="text-center py-20 opacity-50 font-black uppercase tracking-widest text-xs">Cargando datos de hoy...</div>
+              <div className="text-center py-20 font-black uppercase tracking-widest text-[10px] opacity-30 animate-pulse">Sincronizando día...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {getFilteredOrders().map(order => (
@@ -187,8 +184,8 @@ export default function AdminOrders() {
                   </div>
                 ))}
                 {getFilteredOrders().length === 0 && (
-                  <div className="col-span-full text-center py-20 bg-white/[0.01] border border-dashed border-white/5 rounded-[50px]">
-                    <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.3em]">No hay actividad registrada el día de hoy</p>
+                  <div className="col-span-full text-center py-24 border border-dashed border-white/5 rounded-[60px] bg-white/[0.01]">
+                    <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.4em]">Sin actividad registrada hoy en {getMexicoRange().hoyLegible}</p>
                   </div>
                 )}
               </div>
@@ -203,56 +200,44 @@ export default function AdminOrders() {
           : <ClientsModule />}
       </div>
 
-      {/* MODAL CORTE DE CAJA: VERSIÓN RESPONSIVE CELULAR CON SCROLL */}
+      {/* MODAL CORTE MAESTRO TITANIUM */}
       {showCorteModal && corteSummary && (
         <div className="fixed inset-0 z-[200] flex items-start md:items-center justify-center p-2 md:p-4 bg-black/95 backdrop-blur-xl overflow-y-auto no-scrollbar">
           <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-10 w-full max-w-4xl relative shadow-2xl flex flex-col md:flex-row gap-8 my-auto">
             <button onClick={() => setShowCorteModal(false)} className="absolute top-6 right-6 md:top-10 md:right-10 text-gray-500 hover:text-white z-10"><X/></button>
-            
             <div className="flex-1 space-y-4 md:space-y-6">
               <h2 className="text-2xl md:text-3xl font-black uppercase italic text-blue-500 mb-4 md:mb-8 text-center md:text-left">Corte Maestro</h2>
-              
               <div className="bg-black/50 p-4 md:p-6 rounded-3xl border border-white/5">
                 <label className="text-[8px] font-black text-gray-500 uppercase block mb-2">Fondo de Caja (Inicio)</label>
                 <input type="number" value={fondoCaja} onChange={(e) => setFondoCaja(Number(e.target.value))} className="bg-transparent text-xl font-black text-white outline-none w-full" />
               </div>
-
               <div className="bg-white/[0.02] p-4 md:p-6 rounded-3xl border border-white/5">
-                <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest italic">Recibos Detectados Hoy</p>
-                <div className="space-y-3 max-h-32 overflow-y-auto no-scrollbar">
+                <p className="text-[8px] font-black text-gray-500 uppercase mb-4 tracking-widest italic text-center md:text-left">Recibos Detectados ({getMexicoRange().hoyLegible})</p>
+                <div className="space-y-3 max-h-40 overflow-y-auto no-scrollbar">
                   {corteSummary.detallesRecibos.map((r: any) => (
                     <div key={r.id} className="flex justify-between items-center text-[10px] font-black uppercase border-b border-white/5 pb-2">
                       <span className="text-gray-500 truncate mr-2">🚚 {r.proveedores?.nombre || r.proveedor || 'Proveedor'}</span>
                       <span className="text-red-500 shrink-0">-{formatCurrency(r.total || r.total_compra)}</span>
                     </div>
                   ))}
-                  {corteSummary.detallesRecibos.length === 0 && <p className="text-[9px] text-gray-700 italic">No hay actividad de proveedores hoy</p>}
+                  {corteSummary.detallesRecibos.length === 0 && <p className="text-[9px] text-gray-700 italic text-center">No hay actividad de proveedores hoy</p>}
                 </div>
               </div>
-
               <div className="bg-red-600/5 p-4 md:p-6 rounded-3xl border border-red-500/20">
-                <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Gastos Manuales (Sin Recibo)</label>
+                <label className="text-[8px] font-black text-red-500 uppercase block mb-2">Otros Gastos Manuales</label>
                 <input type="number" value={otrosGastos} onChange={(e) => setOtrosGastos(Number(e.target.value))} className="bg-transparent text-xl font-black text-red-500 outline-none w-full" placeholder="$0.00" />
               </div>
-
               <div className="bg-green-600/5 p-4 md:p-6 rounded-3xl border border-green-500/20">
                 <label className="text-[8px] font-black text-green-500 uppercase block mb-2">Efectivo Físico en Cajón</label>
                 <input type="number" value={efectivoFisico} onChange={(e) => setEfectivoFisico(Number(e.target.value))} className="bg-transparent text-2xl md:text-4xl font-black text-green-500 outline-none w-full" placeholder="$0.00" />
               </div>
             </div>
-
             <div className="w-full md:w-[320px] bg-white/[0.03] border border-white/5 rounded-[45px] p-8 md:p-10 flex flex-col justify-center text-center">
               <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Efectivo Esperado</p>
-              <p className="text-2xl md:text-3xl font-black mb-6 md:mb-10">{formatCurrency(corteSummary.esperado)}</p>
-              
+              <p className="text-2xl md:text-3xl font-black mb-10">{formatCurrency(corteSummary.esperado)}</p>
               <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Diferencia Final</p>
-              <p className={`text-4xl md:text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                {formatCurrency(efectivoFisico - corteSummary.esperado)}
-              </p>
-              
-              <button onClick={enviarCorteWA} className="mt-8 md:mt-12 w-full bg-white text-black py-5 md:py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">
-                Cerrar Día y Enviar
-              </button>
+              <p className={`text-4xl md:text-5xl font-black italic tracking-tighter ${efectivoFisico - corteSummary.esperado < 0 ? 'text-red-500' : 'text-blue-500'}`}>{formatCurrency(efectivoFisico - corteSummary.esperado)}</p>
+              <button onClick={enviarCorteWA} className="mt-12 w-full bg-white text-black py-6 rounded-[28px] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">Confirmar y Enviar</button>
             </div>
           </div>
         </div>
