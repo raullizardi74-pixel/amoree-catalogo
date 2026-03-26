@@ -1,14 +1,15 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { Scanner } from './Scanner';
 import { useAuth } from '../context/AuthContext';
 import { 
   Search, ShoppingCart, Plus, Minus, Camera, X, 
-  DollarSign, CreditCard, Smartphone, Send, UserPlus, ShieldOff, UserCheck, Scale, Zap, Calculator 
+  DollarSign, CreditCard, Smartphone, Send, UserCheck, 
+  ShieldOff, Scale, Zap, Calculator, UserPlus, Receipt
 } from 'lucide-react';
+import { format } from 'date-fns';
 
-// 🛡️ NORMALIZADOR DE TEXTO PARA BÚSQUEDA FUZZY
+// 🛡️ NORMALIZADOR DE TEXTO (Fuzzy Search)
 const cleanText = (text: string) => 
   (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
@@ -22,15 +23,20 @@ export default function POS({ onBack }: { onBack: () => void }) {
   const [cart, setCart] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
   
+  // ESTADOS DE PAGO Y CLIENTE
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [withTicket, setWithTicket] = useState(false);
   const [isAnonymous, setIsAnonymous] = useState(true); 
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [metodoPago, setMetodoPago] = useState<'Efectivo' | 'Tarjeta' | 'Transferencia' | 'A Cuenta'>('Efectivo');
   
-  // CALCULADORA DE CAMBIO
+  // NUEVO CLIENTE
+  const [showNewClientForm, setShowNewClientForm] = useState(false);
+  const [newClient, setNewClient] = useState({ nombre: '', telefono: '' });
+
+  // CALCULADORA
   const [pagoCon, setPagoCon] = useState<string>('');
   const totalVenta = useMemo(() => cart.reduce((sum, item) => sum + (item.precio_venta * (Number(item.quantity) || 0)), 0), [cart]);
   const cambio = parseFloat(pagoCon) > 0 ? parseFloat(pagoCon) - totalVenta : 0;
@@ -48,10 +54,6 @@ export default function POS({ onBack }: { onBack: () => void }) {
     setLoading(false);
   };
 
-  const quickAccessProducts = useMemo(() => {
-    return [...products].sort((a, b) => (b.stock_actual || 0) - (a.stock_actual || 0)).slice(0, 10);
-  }, [products]);
-
   const filteredProducts = useMemo(() => {
     const term = cleanText(searchTerm);
     return products.filter(p => cleanText(p.nombre).includes(term) || cleanText(p.categoria || '').includes(term));
@@ -61,10 +63,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
-        return prev.map(item => item.id === product.id 
-          ? { ...item, quantity: item.quantity + 1 } 
-          : item
-        );
+        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       } 
       return [...prev, { ...product, quantity: 1 }];
     });
@@ -80,21 +79,75 @@ export default function POS({ onBack }: { onBack: () => void }) {
     const numValue = parseFloat(value);
     setCart(prev => prev.map(item => {
       if (item.id === id) {
-        if (value === '' || isNaN(numValue)) return { ...item, quantity: 0 };
-        return { ...item, quantity: numValue };
+        return { ...item, quantity: value === '' || isNaN(numValue) ? 0 : numValue };
       }
       return item;
     }));
   };
 
+  const crearNuevoCliente = async () => {
+    if (!newClient.nombre || !newClient.telefono) return alert("Nombre y Celular obligatorios");
+    const { data, error } = await supabase.from('clientes').insert([{
+      nombre: newClient.nombre.toUpperCase(),
+      telefono: newClient.telefono,
+      saldo_deudor: 0
+    }]).select().single();
+
+    if (!error && data) {
+      setClientes(prev => [...prev, data]);
+      setSelectedClient(data);
+      setClientSearch(data.nombre);
+      setShowNewClientForm(false);
+      setNewClient({ nombre: '', telefono: '' });
+    }
+  };
+
+  const enviarTicketWA = (cliente: any, pedidoId: string, saldoAnterior: number, nuevoSaldo: number) => {
+    const fecha = format(new Date(), 'dd/MM/yyyy HH:mm');
+    let msg = `*AMOREE - TICKET DIGITAL* 🌿\n`;
+    msg += `--------------------------------\n`;
+    msg += `📅 *Fecha:* ${fecha}\n`;
+    msg += `👤 *Cliente:* ${cliente.nombre}\n`;
+    msg += `💳 *Pago:* ${metodoPago}\n`;
+    msg += `--------------------------------\n`;
+    
+    cart.forEach(item => {
+      msg += `• ${item.quantity} ${item.unidad || 'kg'} x ${item.nombre}\n  Subtotal: ${formatCurrency(item.precio_venta * item.quantity)}\n`;
+    });
+
+    msg += `--------------------------------\n`;
+    msg += `💰 *TOTAL: ${formatCurrency(totalVenta)}*\n`;
+    
+    if (metodoPago === 'Efectivo' && parseFloat(pagoCon) > 0) {
+      msg += `💵 Recibido: ${formatCurrency(parseFloat(pagoCon))}\n`;
+      msg += `🪙 Cambio: ${formatCurrency(cambio)}\n`;
+    }
+
+    if (metodoPago === 'A Cuenta') {
+      msg += `\n📉 *ESTADO DE CUENTA:*\n`;
+      msg += `Saldo Anterior: ${formatCurrency(saldoAnterior)}\n`;
+      msg += `Saldo Actual: ${formatCurrency(nuevoSaldo)}\n`;
+    }
+
+    msg += `--------------------------------\n`;
+    msg += `¡Gracias por elegir Amorre! 🥑`;
+
+    const url = `https://wa.me/52${cliente.telefono}?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank');
+  };
+
   const finalizarVenta = async () => {
     if (cart.length === 0 || isSubmitting) return;
+    if (withTicket && !selectedClient) return alert("Selecciona un cliente para generar ticket");
+    
     setIsSubmitting(true);
     try {
-      let clienteFinal = { nombre: 'PÚBLICO GENERAL', telefono: '', id: null };
-      if (!isAnonymous && selectedClient) clienteFinal = selectedClient;
+      const clienteFinal = isAnonymous ? { nombre: 'PÚBLICO GENERAL', telefono: '', id: null, saldo_deudor: 0 } : selectedClient;
+      const saldoAnterior = clienteFinal.saldo_deudor || 0;
+      const nuevoSaldo = metodoPago === 'A Cuenta' ? saldoAnterior + totalVenta : saldoAnterior;
 
-      const { error: errPedido } = await supabase.from('pedidos').insert([{
+      // 1. Registrar Pedido
+      const { data: pedido, error: errPedido } = await supabase.from('pedidos').insert([{
         usuario_email: user?.email,
         nombre_cliente: clienteFinal.nombre,
         telefono_cliente: clienteFinal.telefono,
@@ -104,25 +157,29 @@ export default function POS({ onBack }: { onBack: () => void }) {
         metodo_pago: metodoPago,
         origen: 'Mostrador',
         detalle_pedido: cart.map(item => ({
-          id: item.id,
-          sku: item.sku,
-          nombre: item.nombre,
-          quantity: item.quantity,
-          price: item.precio_venta,
-          unidad: item.unidad
+          id: item.id, sku: item.sku, nombre: item.nombre, quantity: item.quantity, price: item.precio_venta, unidad: item.unidad
         }))
-      }]);
+      }]).select().single();
 
       if (errPedido) throw errPedido;
 
+      // 2. Actualizar Stock
       for (const item of cart) {
         const pRef = products.find(p => p.id === item.id);
-        await supabase.from('productos').update({ 
-          stock_actual: (pRef?.stock_actual || 0) - item.quantity 
-        }).eq('id', item.id);
+        await supabase.from('productos').update({ stock_actual: (pRef?.stock_actual || 0) - item.quantity }).eq('id', item.id);
       }
 
-      alert(`🎉 Venta Exitosa\n------------------\nTOTAL: ${formatCurrency(totalVenta)}${metodoPago === 'Efectivo' && parseFloat(pagoCon) > 0 ? `\nPAGÓ CON: ${formatCurrency(parseFloat(pagoCon))}\nCAMBIO: ${formatCurrency(cambio)}` : ''}`);
+      // 3. Actualizar Saldo Cliente si es "A Cuenta"
+      if (metodoPago === 'A Cuenta' && clienteFinal.id) {
+        await supabase.from('clientes').update({ saldo_deudor: nuevoSaldo }).eq('id', clienteFinal.id);
+      }
+
+      // 4. Ticket Digital
+      if (withTicket && !isAnonymous) {
+        enviarTicketWA(clienteFinal, pedido.id, saldoAnterior, nuevoSaldo);
+      } else {
+        alert(`🎉 Venta Exitosa\nTOTAL: ${formatCurrency(totalVenta)}`);
+      }
 
       setCart([]);
       setPagoCon('');
@@ -132,176 +189,182 @@ export default function POS({ onBack }: { onBack: () => void }) {
     } catch (e: any) { alert(e.message); } finally { setIsSubmitting(false); }
   };
 
-  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><Zap className="text-green-500 animate-pulse" size={48}/></div>;
+  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><Zap className="text-green-500 animate-pulse" size={40}/></div>;
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans flex flex-col">
-      {/* HEADER DINÁMICO */}
-      <div className="p-4 md:p-6 border-b border-white/5 flex justify-between items-center bg-black/50 backdrop-blur-xl sticky top-0 z-50">
-        <button onClick={onBack} className="bg-white/5 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/5">← Salir</button>
-        <div className="flex gap-4">
-           <div className="hidden md:flex bg-blue-600/10 border border-blue-500/20 px-4 py-2 rounded-xl items-center gap-2">
-              <Zap size={14} className="text-blue-500 animate-pulse"/>
-              <span className="text-[9px] font-black uppercase text-blue-400">Terminal Amoree v2</span>
+    <div className="h-screen bg-black text-white font-sans flex flex-col overflow-hidden">
+      {/* HEADER COMPACTO */}
+      <div className="p-3 border-b border-white/5 flex justify-between items-center bg-[#050505]">
+        <button onClick={onBack} className="bg-white/5 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/5">← Salir</button>
+        <div className="flex gap-3">
+           <div className="bg-green-600/10 border border-green-500/20 px-3 py-1.5 rounded-lg flex items-center gap-2">
+              <Zap size={12} className="text-green-500"/>
+              <span className="text-[8px] font-black uppercase text-green-400">Tablet Mode Optimized</span>
            </div>
-           <button onClick={() => setShowScanner(true)} className="bg-green-600 p-3 rounded-2xl shadow-lg active:scale-90"><Camera size={20} /></button>
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row flex-1 p-4 md:p-6 gap-6">
-        {/* LADO IZQUIERDO: PRODUCTOS */}
-        <div className="flex-1 flex flex-col gap-6">
-          <div className="relative">
-            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
+      <div className="flex flex-1 overflow-hidden">
+        {/* LADO IZQUIERDO: PRODUCTOS (4-5 COLUMNAS) */}
+        <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden border-r border-white/5">
+          <div className="relative shrink-0">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             <input 
               ref={searchInputRef}
               type="text" 
               placeholder="ESCRIBIR O ESCANEAR..." 
               value={searchTerm} 
               onChange={(e) => setSearchTerm(e.target.value)} 
-              className="w-full bg-[#0A0A0A] border border-white/10 rounded-full py-6 pl-16 pr-8 font-black uppercase text-sm outline-none focus:border-green-500 transition-all shadow-2xl" 
+              className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl py-4 pl-14 pr-6 font-black uppercase text-xs outline-none focus:border-green-500 transition-all" 
             />
           </div>
 
-          {!searchTerm && (
-            <div className="animate-in fade-in duration-500">
-              <p className="text-[9px] font-black text-gray-600 uppercase tracking-[0.3em] mb-4 ml-4">🚀 TOP VENTAS</p>
-              <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-2">
-                {quickAccessProducts.map(p => (
-                  <button key={p.id} onClick={() => addToCart(p)} className="bg-white/5 border border-white/5 px-6 py-4 rounded-3xl whitespace-nowrap hover:bg-green-600 transition-all group">
-                    <p className="text-[10px] font-black uppercase group-hover:text-black">{p.nombre}</p>
-                    <p className="text-[8px] font-bold text-gray-500 group-hover:text-black/50">{formatCurrency(p.precio_venta)}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto no-scrollbar max-h-[60vh] lg:max-h-none pb-20">
+          <div className="grid grid-cols-4 xl:grid-cols-5 gap-3 overflow-y-auto no-scrollbar flex-1 pb-10">
             {filteredProducts.map(product => (
-              <button key={product.id} onClick={() => addToCart(product)} className={`p-6 rounded-[40px] border text-left transition-all relative overflow-hidden group ${product.stock_actual <= 0 ? 'opacity-20 grayscale border-white/5' : 'bg-[#0A0A0A] border-white/5 hover:border-green-500 shadow-xl hover:bg-white/[0.02]'}`}>
-                <p className="text-[8px] text-gray-600 uppercase font-black mb-1">{product.categoria}</p>
-                <p className="font-black text-white uppercase text-[11px] mb-4 leading-tight h-8 overflow-hidden">{product.nombre}</p>
+              <button key={product.id} onClick={() => addToCart(product)} className={`p-4 rounded-[30px] border text-left transition-all relative overflow-hidden group flex flex-col justify-between h-36 ${product.stock_actual <= 0 ? 'opacity-20 grayscale' : 'bg-[#0A0A0A] border-white/5 hover:border-green-500 shadow-lg'}`}>
+                <div>
+                  <p className="text-[7px] text-gray-600 uppercase font-black mb-1 truncate">{product.categoria}</p>
+                  <p className="font-black text-white uppercase text-[9px] leading-tight line-clamp-2">{product.nombre}</p>
+                </div>
                 <div className="flex justify-between items-end">
-                  <p className="text-xl font-black text-green-500">{formatCurrency(product.precio_venta)}</p>
-                  <p className={`text-[9px] font-black uppercase ${product.stock_actual < 2 ? 'text-red-500' : 'text-gray-600'}`}>{product.stock_actual} {product.unidad || 'kg'}</p>
+                  <p className="text-sm font-black text-green-500">{formatCurrency(product.precio_venta)}</p>
+                  <p className={`text-[8px] font-black uppercase ${product.stock_actual < 2 ? 'text-red-500' : 'text-gray-600'}`}>{product.stock_actual}</p>
                 </div>
               </button>
             ))}
           </div>
         </div>
 
-        {/* LADO DERECHO: CARRITO (DUEÑO DE LA VERDAD) */}
-        <div className="w-full lg:w-[420px] shrink-0">
-          <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-8 shadow-2xl flex flex-col h-[70vh] lg:h-[80vh] sticky top-28">
-            <div className="flex justify-between items-center mb-8 shrink-0">
-              <h3 className="font-black uppercase text-xs italic flex items-center gap-2"><ShoppingCart size={16} className="text-green-500"/> Carrito</h3>
-              <span className="bg-white/5 px-4 py-1 rounded-full text-[9px] font-black text-gray-500">{cart.length} ARTÍCULOS</span>
-            </div>
+        {/* LADO DERECHO: CARRITO COMPACTO */}
+        <div className="w-[380px] flex flex-col bg-[#050505] p-6 shadow-2xl">
+          <div className="flex justify-between items-center mb-6 shrink-0">
+            <h3 className="font-black uppercase text-[10px] italic flex items-center gap-2 text-green-500"><ShoppingCart size={14}/> Carrito</h3>
+            <span className="bg-white/5 px-3 py-1 rounded-full text-[8px] font-black text-gray-500">{cart.length} ITEMS</span>
+          </div>
 
-            <div className="flex-1 overflow-y-auto no-scrollbar space-y-4 pr-2">
-              {cart.map(item => (
-                <div key={item.id} className="bg-white/[0.03] border border-white/5 rounded-[30px] p-5 animate-in slide-in-from-right">
-                  <div className="flex justify-between items-start mb-3">
-                    <p className="text-xs font-black uppercase text-white flex-1 pr-4">{item.nombre}</p>
-                    <button onClick={() => removeFromCart(item.id)} className="text-gray-700 hover:text-red-500 transition-colors"><X size={16}/></button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                     <div className="flex items-center bg-black rounded-xl border border-white/10 px-4 py-2">
-                        <Scale size={12} className="text-gray-600 mr-2" />
-                        <input type="number" step="0.001" value={item.quantity} onChange={(e) => updateQuantity(item.id, e.target.value)} className="bg-transparent w-16 text-sm font-black text-green-500 outline-none" />
-                        <span className="text-[8px] font-black text-gray-600 uppercase ml-1">{item.unidad || 'kg'}</span>
-                     </div>
-                     <p className="text-sm font-black text-white">{formatCurrency(item.precio_venta * (item.quantity || 0))}</p>
-                  </div>
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 mb-6">
+            {cart.map(item => (
+              <div key={item.id} className="bg-white/[0.03] border border-white/5 rounded-2xl p-4">
+                <div className="flex justify-between items-start mb-2">
+                  <p className="text-[10px] font-black uppercase text-white truncate flex-1">{item.nombre}</p>
+                  <button onClick={() => removeFromCart(item.id)} className="text-gray-700 hover:text-red-500"><X size={14}/></button>
                 </div>
-              ))}
-              {cart.length === 0 && (
-                <div className="h-full flex flex-col items-center justify-center opacity-10">
-                  <ShoppingCart size={64} />
-                  <p className="text-[10px] font-black uppercase mt-4">Esperando productos...</p>
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center bg-black rounded-lg border border-white/10 px-3 py-1.5">
+                      <input type="number" step="0.001" value={item.quantity} onChange={(e) => updateQuantity(item.id, e.target.value)} className="bg-transparent w-12 text-xs font-black text-green-500 outline-none" />
+                      <span className="text-[7px] font-black text-gray-600 uppercase ml-1">{item.unidad || 'kg'}</span>
+                   </div>
+                   <p className="text-xs font-black text-white">{formatCurrency(item.precio_venta * (item.quantity || 0))}</p>
                 </div>
-              )}
-            </div>
-
-            <div className="border-t border-white/5 pt-6 mt-4 shrink-0">
-              <div className="flex justify-between items-end mb-6 px-2">
-                <span className="text-[10px] text-gray-500 uppercase font-black">Subtotal</span>
-                <span className="text-4xl font-black text-white tracking-tighter">{formatCurrency(totalVenta)}</span>
               </div>
-              <button onClick={() => setShowPaymentModal(true)} disabled={cart.length === 0} className="w-full py-6 bg-green-600 text-black rounded-[30px] font-black uppercase tracking-widest text-[11px] hover:bg-green-500 shadow-xl active:scale-95 transition-all">Cobrar Venta</button>
+            ))}
+          </div>
+
+          <div className="border-t border-white/5 pt-4 shrink-0">
+            <div className="flex justify-between items-end mb-4 px-2">
+              <span className="text-[9px] text-gray-500 uppercase font-black">Total Amoree</span>
+              <span className="text-3xl font-black text-white tracking-tighter">{formatCurrency(totalVenta)}</span>
             </div>
+            <button onClick={() => setShowPaymentModal(true)} disabled={cart.length === 0} className="w-full py-5 bg-green-600 text-black rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-green-500 transition-all active:scale-95 shadow-lg shadow-green-900/10">Siguiente</button>
           </div>
         </div>
       </div>
 
-      {/* ✅ MODAL DE PAGO: CALCULADORA TITANIUM */}
+      {/* ✅ MODAL DE PAGO: CALCULADORA Y TICKET */}
       {showPaymentModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-2 md:p-4 bg-black/98 backdrop-blur-3xl overflow-y-auto">
-          <div className="bg-[#0A0A0A] border border-white/10 rounded-[40px] md:rounded-[60px] p-6 md:p-12 w-full max-w-4xl shadow-2xl relative flex flex-col md:flex-row gap-8 my-auto">
-            <button onClick={() => setShowPaymentModal(false)} className="absolute top-6 right-6 md:top-10 md:right-10 text-gray-500 hover:text-white"><X size={24}/></button>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/98 backdrop-blur-2xl">
+          <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-10 w-full max-w-5xl shadow-2xl relative flex flex-col md:flex-row gap-10">
+            <button onClick={() => setShowPaymentModal(false)} className="absolute top-8 right-8 text-gray-500"><X size={24}/></button>
             
             <div className="flex-1">
-              <h3 className="text-2xl md:text-3xl font-black uppercase italic text-blue-500 mb-8">Finalizar Cobro</h3>
+              <h3 className="text-3xl font-black uppercase italic text-blue-500 mb-8">Cerrar Operación</h3>
               
-              <div className="flex bg-black p-1.5 rounded-2xl border border-white/10 mb-8">
-                <button onClick={() => { setIsAnonymous(true); setSelectedClient(null); setMetodoPago('Efectivo'); }} className={`flex-1 py-3 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-2 transition-all ${isAnonymous ? 'bg-white text-black' : 'text-gray-500'}`}><ShieldOff size={14}/> Anónimo</button>
-                <button onClick={() => setIsAnonymous(false)} className={`flex-1 py-3 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-2 transition-all ${!isAnonymous ? 'bg-green-600 text-white' : 'text-gray-500'}`}><UserCheck size={14}/> Cliente</button>
+              {/* SELECTOR TICKET */}
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <button onClick={() => {setWithTicket(false); setIsAnonymous(true); setSelectedClient(null);}} className={`p-4 rounded-2xl border flex flex-col items-center gap-2 transition-all ${!withTicket ? 'bg-white text-black' : 'bg-black border-white/5 text-gray-600'}`}>
+                  <ShieldOff size={20}/><span className="text-[9px] font-black uppercase">Sin Ticket</span>
+                </button>
+                <button onClick={() => {setWithTicket(true); setIsAnonymous(false);}} className={`p-4 rounded-2xl border flex flex-col items-center gap-2 transition-all ${withTicket ? 'bg-green-600 border-green-600 text-white' : 'bg-black border-white/5 text-gray-600'}`}>
+                  <Receipt size={20}/><span className="text-[9px] font-black uppercase">Con Ticket Digital</span>
+                </button>
               </div>
 
-              {!isAnonymous && (
-                <div className="mb-6 animate-in slide-in-from-top">
-                  <input type="text" placeholder="BUSCAR CLIENTE..." value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl p-4 font-black uppercase text-xs outline-none focus:border-green-500" />
-                  <div className="max-h-24 overflow-y-auto no-scrollbar mt-2 border-l border-white/5">
-                    {clientes.filter(c => cleanText(c.nombre).includes(cleanText(clientSearch))).map(c => (
-                      <button key={c.id} onClick={() => {setSelectedClient(c); setClientSearch(c.nombre);}} className={`w-full p-3 text-left text-[10px] uppercase font-black ${selectedClient?.id === c.id ? 'text-green-500' : 'text-gray-600 hover:text-white'}`}>{c.nombre}</button>
-                    ))}
-                  </div>
+              {/* CLIENTE */}
+              <div className="mb-8">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Seleccionar Cliente</label>
+                  <button onClick={() => setShowNewClientForm(true)} className="text-[8px] font-black text-blue-500 uppercase flex items-center gap-1"><UserPlus size={10}/> Nuevo</button>
                 </div>
-              )}
+                <input type="text" placeholder="BUSCAR..." value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} className="w-full bg-black border border-white/10 rounded-xl p-4 font-black uppercase text-[10px] outline-none mb-2" />
+                <div className="max-h-20 overflow-y-auto no-scrollbar">
+                  {clientes.filter(c => cleanText(c.nombre).includes(cleanText(clientSearch))).map(c => (
+                    <button key={c.id} onClick={() => {setSelectedClient(c); setClientSearch(c.nombre);}} className={`w-full p-2.5 text-left text-[9px] uppercase font-black border-b border-white/5 ${selectedClient?.id === c.id ? 'text-green-500' : 'text-gray-600'}`}>{c.nombre} • {c.telefono}</button>
+                  ))}
+                </div>
+              </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-6">
+              {/* MÉTODO DE PAGO */}
+              <div className="grid grid-cols-2 gap-3">
                 {['Efectivo', 'Tarjeta', 'Transferencia', 'A Cuenta'].map(m => (
-                  <button key={m} disabled={isAnonymous && m === 'A Cuenta'} onClick={() => setMetodoPago(m as any)} className={`py-5 rounded-3xl border flex flex-col items-center justify-center transition-all ${metodoPago === m ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-black border-white/5 text-gray-700'}`}>
-                    <span className="font-black uppercase text-[10px]">{m}</span>
+                  <button key={m} disabled={isAnonymous && m === 'A Cuenta'} onClick={() => setMetodoPago(m as any)} className={`py-4 rounded-xl border flex flex-col items-center justify-center transition-all ${metodoPago === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-white/5 text-gray-700'}`}>
+                    <span className="font-black uppercase text-[9px]">{m}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* SECCIÓN CALCULADORA */}
-            <div className="w-full md:w-[360px] bg-white/[0.02] border border-white/5 rounded-[45px] p-8 flex flex-col">
-                {metodoPago === 'Efectivo' ? (
-                  <>
-                    <div className="text-center mb-8 border-b border-white/5 pb-6">
-                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Cambio Sugerido</p>
-                       <p className={`text-5xl font-black italic tracking-tighter ${cambio >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatCurrency(cambio)}</p>
-                    </div>
-
-                    <div className="bg-black border border-white/10 rounded-3xl p-5 mb-6">
-                       <label className="text-[8px] font-black text-gray-600 uppercase block mb-2 tracking-widest">El cliente entrega:</label>
-                       <div className="flex items-center gap-3">
-                          <DollarSign className="text-gray-600" size={24}/>
-                          <input type="number" value={pagoCon} onChange={(e) => setPagoCon(e.target.value)} className="bg-transparent w-full text-4xl font-black text-white outline-none" placeholder="0.00" autoFocus />
-                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 mb-8">
-                       {[50, 100, 200, 500].map(b => (
-                         <button key={b} onClick={() => setPagoCon(b.toString())} className="bg-white/5 border border-white/5 py-4 rounded-2xl text-[10px] font-black hover:bg-white hover:text-black transition-all">${b} MXN</button>
-                       ))}
-                    </div>
-
-                    <button onClick={finalizarVenta} disabled={isSubmitting || (parseFloat(pagoCon) < totalVenta && parseFloat(pagoCon) > 0)} className="w-full py-7 bg-white text-black rounded-[30px] font-black uppercase tracking-widest text-[11px] shadow-2xl active:scale-95 transition-all">Confirmar Venta</button>
-                  </>
-                ) : (
-                  <div className="h-full flex flex-col justify-center items-center text-center py-10">
-                    <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-6"><CreditCard size={32} className="text-blue-500"/></div>
-                    <p className="text-xs font-black uppercase text-white mb-2">Transacción Electrónica</p>
-                    <p className="text-[9px] font-black text-gray-600 uppercase leading-relaxed px-4">Asegúrate de procesar el pago en la terminal antes de guardar la venta en el sistema.</p>
-                    <button onClick={finalizarVenta} disabled={isSubmitting} className="w-full py-7 bg-blue-600 text-white rounded-[30px] font-black uppercase mt-10 tracking-widest text-[11px]">Guardar Venta</button>
+            {/* CALCULADORA / CONFIRMACIÓN */}
+            <div className="w-[360px] bg-white/[0.02] border border-white/5 rounded-[40px] p-8 flex flex-col justify-between">
+                <div>
+                  <div className="text-center mb-6">
+                    <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Total a Cobrar</p>
+                    <p className="text-4xl font-black italic tracking-tighter text-white">{formatCurrency(totalVenta)}</p>
                   </div>
-                )}
+
+                  {metodoPago === 'Efectivo' && (
+                    <div className="space-y-4">
+                      <div className="bg-black border border-white/10 rounded-2xl p-4">
+                        <label className="text-[7px] font-black text-gray-600 uppercase block mb-1">Recibido:</label>
+                        <input type="number" value={pagoCon} onChange={(e) => setPagoCon(e.target.value)} className="bg-transparent w-full text-3xl font-black text-white outline-none" placeholder="0.00" />
+                      </div>
+                      <div className="text-center py-4 bg-green-500/5 rounded-2xl border border-green-500/10">
+                        <p className="text-[8px] font-black text-green-500 uppercase mb-1">Cambio:</p>
+                        <p className="text-3xl font-black text-white">{formatCurrency(cambio)}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[50, 100, 200, 500].map(b => (
+                          <button key={b} onClick={() => setPagoCon(b.toString())} className="bg-white/5 py-3 rounded-xl text-[10px] font-black hover:bg-white hover:text-black transition-all">${b}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {metodoPago === 'A Cuenta' && selectedClient && (
+                    <div className="bg-blue-600/5 border border-blue-500/20 rounded-2xl p-6 text-center animate-pulse">
+                      <p className="text-[9px] font-black text-blue-400 uppercase mb-2">Nuevo Saldo Deudor:</p>
+                      <p className="text-3xl font-black text-white">{formatCurrency((selectedClient.saldo_deudor || 0) + totalVenta)}</p>
+                    </div>
+                  )}
+                </div>
+
+                <button onClick={finalizarVenta} disabled={isSubmitting || (metodoPago === 'Efectivo' && parseFloat(pagoCon) < totalVenta && parseFloat(pagoCon) > 0)} className="w-full py-6 bg-white text-black rounded-[25px] font-black uppercase tracking-[0.2em] text-[10px] shadow-2xl active:scale-95">Finalizar Operación</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL NUEVO CLIENTE */}
+      {showNewClientForm && (
+        <div className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-6 backdrop-blur-md">
+          <div className="bg-[#0A0A0A] border border-white/10 p-8 rounded-[40px] w-full max-w-sm">
+            <h3 className="text-xl font-black uppercase italic mb-6">Nuevo Cliente Amoree</h3>
+            <div className="space-y-4">
+              <input type="text" placeholder="NOMBRE COMPLETO" value={newClient.nombre} onChange={(e) => setNewClient({...newClient, nombre: e.target.value})} className="w-full bg-black border border-white/10 p-4 rounded-xl text-xs font-black uppercase text-green-500 outline-none" />
+              <input type="number" placeholder="CELULAR (10 DÍGITOS)" value={newClient.telefono} onChange={(e) => setNewClient({...newClient, telefono: e.target.value})} className="w-full bg-black border border-white/10 p-4 rounded-xl text-xs font-black outline-none" />
+              <div className="flex gap-3 pt-4">
+                <button onClick={() => setShowNewClientForm(false)} className="flex-1 bg-white/5 py-4 rounded-xl text-[10px] font-black uppercase">Cancelar</button>
+                <button onClick={crearNuevoCliente} className="flex-1 bg-blue-600 py-4 rounded-xl text-[10px] font-black uppercase">Guardar</button>
+              </div>
             </div>
           </div>
         </div>
