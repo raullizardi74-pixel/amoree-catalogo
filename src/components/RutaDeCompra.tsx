@@ -59,23 +59,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     });
   }, [products, salesData]);
 
-  const resumenMision = useMemo(() => {
-    const itemsFaltantes = analysis.filter(p => p.urg < 3 && p.activo !== false);
-    const dineroNecesario = itemsFaltantes.reduce((acc, curr) => acc + curr.presupuesto, 0);
-    return { count: itemsFaltantes.length, dinero: dineroNecesario };
-  }, [analysis]);
-
-  const categoriesOrdered = useMemo(() => {
-    const cats = Array.from(new Set(analysis.map(p => p.categoria || 'Otros')));
-    return cats.sort((a, b) => {
-      const itemsA = analysis.filter(p => p.categoria === a && p.activo !== false);
-      const itemsB = analysis.filter(p => p.categoria === b && p.activo !== false);
-      const minA = itemsA.length > 0 ? Math.min(...itemsA.map(p => p.urg)) : 3;
-      const minB = itemsB.length > 0 ? Math.min(...itemsB.map(p => p.urg)) : 3;
-      return minA - minB;
-    });
-  }, [analysis]);
-
   const updateRegistro = (sku: string, field: string, value: any, itemRef?: any) => {
     setRegistroCompra(prev => {
       const cur = prev[sku] || { 
@@ -94,7 +77,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   const ejecutarCompraMaestra = async () => {
     const items = Object.entries(registroCompra).filter(([_, val]) => Number(val.cantidad) > 0);
-    if (items.length === 0) return alert("Socio, no hay productos en el carrito.");
+    if (items.length === 0) return alert("Socio, el carrito está vacío.");
     
     setIsSubmitting(true);
     try {
@@ -138,12 +121,13 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         }).eq('id', p.id);
       }
 
-      alert("✅ Misión de Abasto Sincronizada."); 
+      alert("✅ Sincronización Exitosa."); 
       onBack();
     } catch (e: any) { alert("Error: " + e.message); } finally { setIsSubmitting(false); }
   };
 
   const currentTotal = Object.values(registroCompra).reduce((a, b) => a + (Number(b.cantidad) * Number(b.cost) || 0), 0);
+  const itemsCompradosCount = Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length;
 
   if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center z-[100]"><Zap className="text-green-500 animate-pulse" size={48} /></div>;
 
@@ -151,60 +135,60 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden animate-in fade-in">
       {/* HEADER */}
       <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#050505] shadow-2xl">
-        <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl hover:bg-white/10 transition-all active:scale-90"><X size={20} /></button>
+        <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl active:scale-90"><X size={20} /></button>
         <div className="text-center">
           <h2 className="text-xl font-black uppercase italic tracking-tighter">Misión <span className="text-green-500">Central</span></h2>
-          <div className="flex items-center gap-2 justify-center mt-1">
-            <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest">Presupuesto:</p>
-            <p className="text-[9px] text-green-500 font-black">{formatCurrency(resumenMision.dinero)}</p>
-          </div>
+          <p className="text-[9px] text-green-500 font-black">{formatCurrency(currentTotal)}</p>
         </div>
-        <div className="w-10"></div>
+        <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl border border-white/10">
+          <ClipboardList size={20} className={itemsCompradosCount > 0 ? 'text-green-500' : 'text-gray-500'} />
+          {analysis.filter(p => p.urg < 3 && p.activo !== false).length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-600 text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center">
+              {analysis.filter(p => p.urg < 3 && p.activo !== false).length}
+            </span>
+          )}
+        </button>
       </div>
 
       <div className="p-4 bg-[#080808] border-b border-white/5">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16}/>
-          <input type="text" placeholder="BUSCAR EN LA CENTRAL..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-xs font-black text-green-500 uppercase outline-none focus:border-green-600" />
+          <input type="text" placeholder="BUSCAR ARTÍCULO..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-xs font-black text-green-500 uppercase outline-none focus:border-green-600" />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
-        {categoriesOrdered.map(cat => {
-          const rawItems = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
-          const items = [...rawItems].sort((a, b) => a.urg - b.urg);
+        {Array.from(new Set(analysis.map(p => p.categoria || 'Otros'))).map(cat => {
+          const items = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
           if (items.length === 0) return null;
-
           const minUrg = items.filter(i => i.activo !== false).length > 0 ? Math.min(...items.filter(i => i.activo !== false).map(i => i.urg)) : 3;
-          const colorCat = minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : 'bg-green-500';
 
           return (
-            <div key={cat} className={`rounded-[35px] border transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10' : 'border-white/5 opacity-80'}`}>
+            <div key={cat} className={`rounded-[35px] border transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10' : 'border-white/5'}`}>
               <button onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)} className="w-full p-6 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${colorCat} ${minUrg <= 1 ? 'animate-pulse' : ''}`}></div>
+                  <div className={`w-3 h-3 rounded-full ${minUrg === 0 ? 'bg-red-600' : minUrg === 1 ? 'bg-orange-500' : 'bg-green-500'}`}></div>
                   <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">{cat}</h3>
                 </div>
-                <ChevronDown size={16} className={`text-gray-600 transition-transform ${expandedCategory === cat ? 'rotate-180' : ''}`}/>
+                <ChevronDown size={16} className={`text-gray-600 ${expandedCategory === cat ? 'rotate-180' : ''}`}/>
               </button>
-
               {expandedCategory === cat && (
                 <div className="px-4 pb-8 space-y-6">
                   {items.map(item => {
-                    const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo, prev: item.precio_venta, mgn: OBJETIVOS_UTILIDAD[item.categoria] || 0.15 };
+                    const data = registroCompra[item.sku] || { cantidad: 0, cost: item.costo };
                     return (
-                      <div key={item.sku} className={`p-6 rounded-[35px] border transition-all ${item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : 'border-white/5 bg-white/[0.01]'}`}>
+                      <div key={item.sku} className={`p-6 rounded-[35px] border ${item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.04]' : 'border-white/5 bg-white/[0.01]'}`}>
                         <div className="flex justify-between items-start mb-6">
-                          <div><p className="text-[11px] font-black uppercase italic text-white">{item.nombre}</p><p className="text-[8px] text-gray-600 font-bold uppercase mt-1">Costo Actual: {formatCurrency(item.costo)}</p></div>
-                          <div className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase ${item.urg === 0 ? 'bg-red-600 text-white' : 'bg-green-600/20 text-green-500'}`}>{item.stock_actual} {item.unidad}</div>
+                          <div><p className="text-[11px] font-black uppercase text-white">{item.nombre}</p><p className="text-[8px] text-gray-600 uppercase">Stock: {item.stock_actual} {item.unidad}</p></div>
+                          {Number(data.cantidad) > 0 && <CheckCircle2 size={16} className="text-green-500"/>}
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
-                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 tracking-widest">Cantidad</label>
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2">Cantidad</label>
                              <input type="number" value={data.cantidad || ''} onChange={(e) => updateRegistro(item.sku, 'cantidad', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" placeholder={`Sug: ${item.sug}`}/>
                           </div>
                           <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
-                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2 tracking-widest">Costo Central</label>
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-2">Costo</label>
                              <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-white outline-none" />
                           </div>
                         </div>
@@ -218,13 +202,48 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         })}
       </div>
 
-      {/* FOOTER */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60]">
-        <div className="max-w-7xl mx-auto flex justify-between items-end mb-4 px-2">
-          <div><p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Inversión Actual</p><p className="text-3xl font-black text-white tracking-tighter">{formatCurrency(currentTotal)}</p></div>
-          <p className="text-xl font-black text-green-500">{Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length} Artículos</p>
+      {/* ✅ MODAL DE CHECKLIST: EL RECUERDO DE HUGO */}
+      {showChecklist && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in slide-in-from-bottom">
+          <div className="p-8 border-b border-white/10 flex justify-between items-center bg-[#050505]">
+            <div><h3 className="text-3xl font-black uppercase italic tracking-tighter">Lista de <span className="text-green-500">Misión</span></h3></div>
+            <button onClick={() => setShowChecklist(false)} className="bg-white/5 p-4 rounded-full"><X size={24}/></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            <div>
+              <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-4">🛒 POR COMPRAR</p>
+              <div className="space-y-3">
+                {analysis.filter(p => p.urg < 3 && p.activo !== false && !registroCompra[p.sku]?.cantidad).map(p => (
+                  <div key={p.sku} className="bg-white/[0.02] border border-white/5 p-5 rounded-[25px] flex justify-between items-center">
+                    <p className="text-xs font-black uppercase">{p.nombre}</p>
+                    <p className="text-[10px] text-gray-500 font-bold">{p.sug} {p.unidad}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-4">✅ YA EN CAMIONETA</p>
+              <div className="space-y-3">
+                {Object.entries(registroCompra).filter(([_, v]) => Number(v.cantidad) > 0).map(([sku, v]) => (
+                  <div key={sku} className="bg-green-500/5 border border-green-500/20 p-5 rounded-[25px] flex justify-between items-center">
+                    <p className="text-xs font-black uppercase text-white">{v.nombre}</p>
+                    <p className="text-xs font-black text-green-500">{v.cantidad}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="p-8"><button onClick={() => setShowChecklist(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-widest">Regresar a Surtir</button></div>
         </div>
-        <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[28px] text-black font-black uppercase text-xs tracking-[0.3em] active:scale-95 transition-all">
+      )}
+
+      {/* FOOTER */}
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60] shadow-2xl">
+        <div className="max-w-7xl mx-auto flex justify-between items-end mb-4">
+          <div><p className="text-[9px] font-black text-gray-600 uppercase mb-1">Inversión Actual</p><p className="text-3xl font-black text-white">{formatCurrency(currentTotal)}</p></div>
+          <p className="text-xl font-black text-green-500">{itemsCompradosCount} Artículos</p>
+        </div>
+        <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[28px] text-black font-black uppercase text-xs tracking-widest active:scale-95 transition-all">
           {issubmitting ? 'Sincronizando...' : 'Finalizar y Cargar Stock'}
         </button>
       </div>
