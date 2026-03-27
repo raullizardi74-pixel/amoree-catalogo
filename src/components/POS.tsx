@@ -4,12 +4,10 @@ import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { 
   Search, ShoppingCart, X, DollarSign, CreditCard, 
-  Smartphone, Send, UserCheck, ShieldOff, Scale, 
-  Zap, Calculator, UserPlus, Receipt, Camera
+  Send, UserCheck, ShieldOff, Scale, Zap, UserPlus, Receipt, Camera
 } from 'lucide-react';
 import { format } from 'date-fns';
 
-// 🛡️ NORMALIZADOR DE TEXTO (Fuzzy Search)
 const cleanText = (text: string) => 
   (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
@@ -36,7 +34,18 @@ export default function POS({ onBack }: { onBack: () => void }) {
 
   const [pagoCon, setPagoCon] = useState<string>('');
   const totalVenta = useMemo(() => cart.reduce((sum, item) => sum + (item.precio_venta * (Number(item.quantity) || 0)), 0), [cart]);
-  const cambio = parseFloat(pagoCon) > 0 ? parseFloat(pagoCon) - totalVenta : 0;
+  const cambio = parseFloat(pagoCon || '0') >= totalVenta ? parseFloat(pagoCon || '0') - totalVenta : 0;
+
+  // ✅ CANDADO MAESTRO DE BOTÓN
+  const isPaymentDisabled = useMemo(() => {
+    if (isSubmitting) return true;
+    if (metodoPago === 'Efectivo') {
+      const monto = parseFloat(pagoCon || '0');
+      return monto < totalVenta; // Bloqueado si paga menos del total
+    }
+    if (metodoPago === 'A Cuenta' && (isAnonymous || !selectedClient)) return true;
+    return false;
+  }, [isSubmitting, metodoPago, pagoCon, totalVenta, isAnonymous, selectedClient]);
 
   useEffect(() => { 
     fetchData();
@@ -59,7 +68,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
   const addToCart = (product: any) => {
     const inCart = cart.find(item => item.id === product.id);
     const qtyInCart = inCart ? inCart.quantity : 0;
-    if (qtyInCart + 1 > product.stock_actual) return alert(`⚠️ Stock insuficiente: ${product.stock_actual} ${product.unidad} disponibles.`);
+    if (qtyInCart + 1 > product.stock_actual) return alert(`⚠️ Stock insuficiente: ${product.stock_actual} disponibles.`);
 
     setCart(prev => {
       if (inCart) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
@@ -72,55 +81,44 @@ export default function POS({ onBack }: { onBack: () => void }) {
   const updateQuantity = (id: number, value: string) => {
     const numValue = parseFloat(value);
     const pRef = products.find(p => p.id === id);
-    if (numValue > (pRef?.stock_actual || 0)) return alert(`⚠️ Stock máximo: ${pRef?.stock_actual}`);
-
+    if (numValue > (pRef?.stock_actual || 0)) return alert(`⚠️ Máximo en stock: ${pRef?.stock_actual}`);
     setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: value === '' || isNaN(numValue) ? 0 : numValue } : item));
   };
 
   const crearNuevoCliente = async () => {
-    if (!newClient.nombre || !newClient.telefono) return alert("Nombre y Celular obligatorios");
+    if (!newClient.nombre || !newClient.telefono) return alert("Datos obligatorios");
     const { data, error } = await supabase.from('clientes').insert([{
       nombre: newClient.nombre.toUpperCase(),
       telefono: newClient.telefono,
       saldo_deudor: 0
     }]).select().single();
     if (data) {
-      setClientes(p => [...p, data]);
-      setSelectedClient(data);
-      setClientSearch(data.nombre);
-      setShowNewClientForm(false);
-      setNewClient({ nombre: '', telefono: '' });
+      setClientes(p => [...p, data]); setSelectedClient(data); setClientSearch(data.nombre);
+      setShowNewClientForm(false); setNewClient({ nombre: '', telefono: '' });
     }
   };
 
   const enviarTicketWA = (cliente: any, saldoAnt: number, saldoNue: number) => {
     const fecha = format(new Date(), 'dd/MM/yyyy HH:mm');
-    let msg = `*AMOREE - TICKET DIGITAL* 🌿\n--------------------------------\n`;
-    msg += `📅 *Fecha:* ${fecha}\n👤 *Cliente:* ${cliente.nombre}\n💳 *Método:* ${metodoPago}\n--------------------------------\n`;
+    let msg = `*AMOREE - TICKET DIGITAL* 🌿\n--------------------------------\n📅 *Fecha:* ${fecha}\n👤 *Cliente:* ${cliente.nombre}\n💳 *Método:* ${metodoPago}\n--------------------------------\n`;
     cart.forEach(i => { msg += `• ${i.quantity} ${i.unidad || 'kg'} x ${i.nombre}\n  Sub: ${formatCurrency(i.precio_venta * i.quantity)}\n`; });
     msg += `--------------------------------\n💰 *TOTAL: ${formatCurrency(totalVenta)}*\n`;
-    if (metodoPago === 'Efectivo' && parseFloat(pagoCon) > 0) {
-      msg += `💵 Pago: ${formatCurrency(parseFloat(pagoCon))}\n🪙 Cambio: ${formatCurrency(cambio)}\n`;
-    }
-    if (metodoPago === 'A Cuenta') {
-      msg += `\n📉 *SALDO ACTUALIZADO:*\nAnt: ${formatCurrency(saldoAnt)}\n*NUEVO SALDO: ${formatCurrency(saldoNue)}*\n`;
-    }
-    msg += `--------------------------------\n¡Gracias por tu preferencia! 🥑`;
+    if (metodoPago === 'Efectivo') msg += `💵 Pago: ${formatCurrency(parseFloat(pagoCon || '0'))}\n🪙 Cambio: ${formatCurrency(cambio)}\n`;
+    if (metodoPago === 'A Cuenta') msg += `\n📉 *SALDO:*\nAnt: ${formatCurrency(saldoAnt)}\n*NUEVO: ${formatCurrency(saldoNue)}*\n`;
+    msg += `--------------------------------\n¡Gracias por tu compra! 🥑`;
     window.open(`https://wa.me/52${cliente.telefono}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const finalizarVenta = async () => {
     if (cart.length === 0 || isSubmitting) return;
-    if (withTicket && (!selectedClient || !selectedClient.telefono)) return alert("Cliente con Celular requerido para Ticket");
-    
     setIsSubmitting(true);
     try {
       const clienteFinal = isAnonymous ? { nombre: 'PÚBLICO GENERAL', telefono: '', id: null, saldo_deudor: 0 } : selectedClient;
       const saldoAnterior = clienteFinal.saldo_deudor || 0;
       const nuevoSaldo = metodoPago === 'A Cuenta' ? saldoAnterior + totalVenta : saldoAnterior;
 
-      // ✅ REGISTRO EN SUPABASE (Ajustado a pedidos_rows.csv)
-      const { data: pedido, error: errP } = await supabase.from('pedidos').insert([{
+      // ✅ INSERCIÓN BLINDADA (Según pedidos_rows.csv)
+      const payload = {
         usuario_email: user?.email || 'mostrador@amoree.com',
         nombre_cliente: clienteFinal.nombre,
         telefono_cliente: clienteFinal.telefono,
@@ -129,48 +127,56 @@ export default function POS({ onBack }: { onBack: () => void }) {
         estado: 'Finalizado',
         metodo_pago: metodoPago,
         origen: 'Mostrador',
-        vendedor: 'Hugo - Mostrador', // Atributo para auditoría
+        vendedor: 'Hugo - Terminal',
         detalle_pedido: cart.map(i => ({ id: i.id, sku: i.sku, nombre: i.nombre, quantity: i.quantity, price: i.precio_venta, unidad: i.unidad }))
-      }]).select().single();
+      };
 
-      if (errP) throw new Error("Error en Pedido: " + errP.message);
+      const { data: pedido, error: errP } = await supabase.from('pedidos').insert([payload]).select();
 
-      // Actualizar Stock y Saldos
+      if (errP) throw new Error(`DB Error: ${errP.message} (Código: ${errP.code})`);
+
+      // 2. Descontar Stock
       for (const i of cart) {
         const pRef = products.find(p => p.id === i.id);
         await supabase.from('productos').update({ stock_actual: (pRef?.stock_actual || 0) - i.quantity }).eq('id', i.id);
       }
+      
+      // 3. Saldo Deudor
       if (metodoPago === 'A Cuenta' && clienteFinal.id) {
         await supabase.from('clientes').update({ saldo_deudor: nuevoSaldo }).eq('id', clienteFinal.id);
       }
 
       if (withTicket && !isAnonymous) enviarTicketWA(clienteFinal, saldoAnterior, nuevoSaldo);
-      else alert(`✅ Venta #${pedido.id} Guardada con éxito.`);
+      else alert(`✅ Venta Exitosa.`);
 
       setCart([]); setPagoCon(''); setShowPaymentModal(false); fetchData();
       searchInputRef.current?.focus();
-    } catch (e: any) { alert("❌ " + e.message); } finally { setIsSubmitting(false); }
+    } catch (e: any) { 
+      alert("❌ ERROR CRÍTICO:\n" + e.message); 
+    } finally { 
+      setIsSubmitting(false); 
+    }
   };
+
+  if (loading) return <div className="h-screen bg-black flex items-center justify-center"><Zap className="text-green-500 animate-pulse" size={40}/></div>;
 
   return (
     <div className="h-screen bg-black text-white font-sans flex flex-col overflow-hidden">
-      {/* HEADER TABLET */}
+      {/* HEADER COMPACTO */}
       <div className="p-3 border-b border-white/5 flex justify-between items-center bg-[#050505] shrink-0">
         <button onClick={onBack} className="bg-white/5 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/5">← Salir</button>
-        <div className="flex gap-2">
-           <div className="bg-blue-600/10 border border-blue-500/20 px-3 py-1.5 rounded-lg flex items-center gap-2">
-              <Zap size={12} className="text-blue-500 animate-pulse"/>
-              <span className="text-[8px] font-black uppercase text-blue-400 italic">Tablet OS v3</span>
-           </div>
+        <div className="bg-green-600/10 border border-green-500/20 px-3 py-1.5 rounded-lg flex items-center gap-2">
+          <Zap size={12} className="text-green-500"/>
+          <span className="text-[8px] font-black uppercase text-green-400">Tablet Optimized v4</span>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* PRODUCTOS (4-5 COLUMNAS) */}
+        {/* IZQUIERDA: PRODUCTOS (4-5 COLUMNAS) */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden border-r border-white/5">
           <div className="relative shrink-0">
             <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-            <input ref={searchInputRef} type="text" placeholder="ESCRIBIR O ESCANEAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl py-4 pl-14 pr-6 font-black uppercase text-xs outline-none focus:border-green-500" />
+            <input ref={searchInputRef} type="text" placeholder="BUSCAR O ESCANEAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl py-4 pl-14 pr-6 font-black uppercase text-xs outline-none focus:border-green-500" />
           </div>
 
           <div className="grid grid-cols-4 xl:grid-cols-5 gap-2 overflow-y-auto no-scrollbar flex-1 pb-10">
@@ -182,17 +188,17 @@ export default function POS({ onBack }: { onBack: () => void }) {
                 </div>
                 <div className="flex justify-between items-end">
                    <p className="text-sm font-black text-green-500">{formatCurrency(p.precio_venta)}</p>
-                   <p className={`text-[7px] font-black uppercase ${p.stock_actual < 2 ? 'text-red-500' : 'text-gray-600'}`}>Stock: {p.stock_actual}</p>
+                   <p className={`text-[7px] font-black uppercase ${p.stock_actual < 2 ? 'text-red-500' : 'text-gray-600'}`}>{p.stock_actual}</p>
                 </div>
               </button>
             ))}
           </div>
         </div>
 
-        {/* CARRITO COMPACTO */}
+        {/* DERECHA: CARRITO */}
         <div className="w-[340px] flex flex-col bg-[#050505] p-5 shadow-2xl shrink-0">
           <h3 className="font-black uppercase text-[10px] italic flex items-center gap-2 text-green-500 mb-6"><ShoppingCart size={14}/> Carrito Amoree</h3>
-          <div className="flex-1 overflow-y-auto no-scrollbar space-y-2 mb-6 pr-1">
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-2 mb-6">
             {cart.map(item => (
               <div key={item.id} className="bg-white/[0.03] border border-white/5 rounded-2xl p-4">
                 <div className="flex justify-between items-start mb-2">
@@ -219,7 +225,7 @@ export default function POS({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* MODAL PAGO & CALCULADORA */}
+      {/* MODAL COBRO TITANIUM */}
       {showPaymentModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/98 backdrop-blur-2xl">
           <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-8 w-full max-w-4xl shadow-2xl relative flex gap-10">
@@ -255,10 +261,9 @@ export default function POS({ onBack }: { onBack: () => void }) {
               </div>
             </div>
 
-            {/* CALCULADORA */}
             <div className="w-[340px] bg-white/[0.02] border border-white/5 rounded-[40px] p-8 flex flex-col justify-between">
                 <div>
-                  <div className="text-center mb-8"><p className="text-[9px] font-black text-gray-500 uppercase">Cobrar</p><p className="text-4xl font-black italic tracking-tighter text-white">{formatCurrency(totalVenta)}</p></div>
+                  <div className="text-center mb-8"><p className="text-[9px] font-black text-gray-500 uppercase">A Cobrar</p><p className="text-4xl font-black italic text-white">{formatCurrency(totalVenta)}</p></div>
                   {metodoPago === 'Efectivo' && (
                     <div className="space-y-4">
                       <div className="bg-black border border-white/10 rounded-2xl p-4">
@@ -277,7 +282,10 @@ export default function POS({ onBack }: { onBack: () => void }) {
                     </div>
                   )}
                 </div>
-                <button onClick={finalizarVenta} disabled={isSubmitting || (metodoPago === 'Efectivo' && parseFloat(pagoCon) < totalVenta && parseFloat(pagoCon) > 0)} className="w-full py-6 bg-white text-black rounded-[25px] font-black uppercase text-[10px] shadow-2xl active:scale-95">Confirmar Venta</button>
+                {/* ✅ EL BOTÓN YA NO DEJA PASAR SI FALTA DINERO EN EFECTIVO */}
+                <button onClick={finalizarVenta} disabled={isPaymentDisabled} className={`w-full py-6 rounded-[25px] font-black uppercase text-[10px] shadow-2xl active:scale-95 transition-all ${isPaymentDisabled ? 'bg-white/10 text-gray-500' : 'bg-white text-black'}`}>
+                  {isSubmitting ? 'GUARDANDO...' : 'Confirmar Venta'}
+                </button>
             </div>
           </div>
         </div>
