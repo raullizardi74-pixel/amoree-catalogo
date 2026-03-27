@@ -1,179 +1,151 @@
 import { useState, useEffect } from 'react';
+import { Product } from '../types';
 import { useShoppingCart } from '../context/ShoppingCartContext';
 import { formatCurrency } from '../lib/utils';
-import DatePicker, { registerLocale } from 'react-datepicker';
-import { format, addMinutes, isSameDay, setHours, setMinutes } from 'date-fns';
-import { es } from 'date-fns/locale/es';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { Settings, X, Plus, Minus } from 'lucide-react'; // Importamos iconos para mayor claridad
 
-registerLocale('es', es);
+interface ProductCardProps {
+  product: Product;
+}
 
-export default function ShoppingCart() {
-  const { cartItems, cartTotal, setCartItems } = useShoppingCart();
-  const { user } = useAuth();
+export default function ProductCard({ product }: ProductCardProps) {
+  const { addToCart, decrementCartItem, getItemQuantity } = useShoppingCart();
+  const { isAdmin } = useAuth();
+  const [isEditing, setIsEditing] = useState(false);
   
-  const [deliveryDate, setDeliveryDate] = useState(new Date());
-  const [deliveryTime, setDeliveryTime] = useState('');
-  const [phone, setPhone] = useState('');
-  const [guestName, setGuestName] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [newCosto, setNewCosto] = useState(product.costo || 0);
+  const [newPrice, setNewPrice] = useState((product.precio_venta || 0).toString());
+  const [compraHoy, setCompraHoy] = useState<number>(0);
+  const [sugerido, setSugerido] = useState<number>(0);
+  const [loadingStats, setLoadingStats] = useState(false);
+  
+  const currentSku = product.sku || product.SKU || '';
+  const quantity = getItemQuantity(currentSku);
+  const MARGEN = 1.20;
 
-  const generateTimeSlots = () => {
-    const slots = [];
-    const now = new Date();
-    const preparationMargin = addMinutes(now, 45);
-    for (let hour = 8; hour <= 19; hour++) {
-      for (let minute of ['00', '30']) {
-        const slotTime = setMinutes(setHours(new Date(deliveryDate), hour), parseInt(minute));
-        if (isSameDay(deliveryDate, now)) {
-          if (slotTime > preparationMargin) slots.push(`${hour.toString().padStart(2, '0')}:${minute}`);
-        } else {
-          slots.push(`${hour.toString().padStart(2, '0')}:${minute}`);
-        }
-      }
-    }
-    return slots;
-  };
+  const unitLabel = (() => {
+    const n = product.nombre.toLowerCase();
+    const pzaKeywords = ['pieza', 'pza', 'lechuga', 'melón', 'sandía', 'coliflor', 'brócoli', 'piña', 'apio', 'pepino', 'coco', 'papaya'];
+    const manojoKeywords = ['manojo', 'cilantro', 'perejil', 'espinaca', 'acelga', 'rábano', 'cebollita', 'epazote', 'hierbabuena'];
+    if (pzaKeywords.some(k => n.includes(k))) return 'pza';
+    if (manojoKeywords.some(k => n.includes(k))) return 'manojo';
+    return 'kg';
+  })();
 
-  const availableSlots = generateTimeSlots();
+  const step = unitLabel === 'kg' ? 0.25 : 1;
 
   useEffect(() => {
-    if (availableSlots.length > 0 && (!deliveryTime || !availableSlots.includes(deliveryTime))) {
-      setDeliveryTime(availableSlots[0]);
-    }
-  }, [deliveryDate, availableSlots]);
+    if (isEditing && isAdmin) fetchSalesAnalysis();
+  }, [isEditing]);
 
-  // LÓGICA DE ENVÍO RESTAURADA
-  const shippingCost = (cartTotal > 0 && cartTotal < 100) ? 30 : 0;
-  const totalFinal = cartTotal + shippingCost;
-
-  const handleCheckout = async () => {
-    const finalName = user?.user_metadata?.full_name || guestName;
-    if (!finalName) return alert('Por favor dinos tu nombre para el pedido.');
-    if (!phone || phone.length < 10) return alert('Ingresa tu celular a 10 dígitos.');
-    if (!deliveryTime) return alert('No hay horarios disponibles para hoy.');
-
-    setLoading(true);
-    const messageDate = format(deliveryDate, 'dd/MM/yyyy');
-    
+  const fetchSalesAnalysis = async () => {
+    setLoadingStats(true);
     try {
-      await supabase.from('pedidos').insert([{
-        usuario_email: user?.email || `Invitado_${phone}`,
-        nombre_cliente: finalName,
-        detalle_pedido: cartItems,
-        total: totalFinal,
-        estado: 'Pendiente',
-        telefono_cliente: `${phone} (Entrega: ${messageDate} ${deliveryTime})`
-      }]);
-
-      let message = `*NUEVO PEDIDO - AMOREE*\n`;
-      message += `--------------------------\n`;
-      message += `👤 CLIENTE: ${finalName}\n`;
-      message += `📅 FECHA: ${messageDate}\n`;
-      message += `⏰ HORA: ${deliveryTime} hrs\n`;
-      message += `📞 TEL: ${phone}\n`;
-      message += `--------------------------\n`;
-      cartItems.forEach(item => {
-        message += `• ${item.quantity} ${item.unidad || 'kg'} x ${item.nombre} = ${formatCurrency(item.precio_venta * item.quantity)}\n`;
-      });
-      message += `--------------------------\n`;
-      if (shippingCost > 0) message += `🚚 Envío: ${formatCurrency(shippingCost)}\n`;
-      else message += `🚚 Envío: ¡GRATIS!\n`;
-      message += `💰 *TOTAL APROX: ${formatCurrency(totalFinal)}*\n\n`;
-      message += `⚠️ *NOTA:* Amoree preparará tu pedido y confirmará el total final en base al peso real de la báscula al momento de surtir.\n\n`;
-      message += `_Favor de confirmar el pedido._`;
-
-      window.open(`https://wa.me/522215306435?text=${encodeURIComponent(message)}`, '_blank');
-      setCartItems([]);
-    } catch (e) { alert("Error al guardar pedido."); }
-    finally { setLoading(false); }
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const { data: pedidos } = await supabase.from('pedidos').select('detalle_pedido').eq('estado', 'Finalizado').gte('created_at', sevenDaysAgo.toISOString());
+      if (pedidos) {
+        let totalVendido = 0;
+        pedidos.forEach(p => {
+          const items = p.detalle_pedido as any[];
+          const item = items.find(i => (i.sku || i.SKU) === currentSku);
+          if (item) totalVendido += item.quantity;
+        });
+        setSugerido(Number(((totalVendido / 7) * 3).toFixed(2)));
+      }
+    } catch (e) { console.error(e); } finally { setLoadingStats(false); }
   };
 
-  if (cartItems.length === 0) return <div className="p-10 text-center text-gray-400 font-black uppercase">Canasta vacía</div>;
+  const handleUpdateStockAndPrice = async () => {
+    try {
+      await supabase.from('productos').update({ costo: newCosto, precio_venta: parseFloat(newPrice), stock_actual: (product.stock_actual || 0) + compraHoy }).eq('sku', currentSku);
+      if (compraHoy > 0) {
+        await supabase.from('compras').insert([{ producto_sku: currentSku, nombre_producto: product.nombre, cantidad: compraHoy, unidad: unitLabel, costo_unitario: newCosto, total_compra: compraHoy * newCosto }]);
+      }
+      setIsEditing(false);
+      window.location.reload(); 
+    } catch (e) { alert('Error de sincronización.'); }
+  };
 
   return (
-    <div className="p-4 max-w-md mx-auto bg-white rounded-[2.5rem] shadow-2xl border border-gray-100 m-2">
-      <h2 className="text-2xl font-black text-green-900 mb-6 uppercase italic tracking-tighter leading-none">Mi Pedido</h2>
-      
-      {/* LISTA DE ITEMS */}
-      <div className="space-y-2 mb-6 max-h-52 overflow-y-auto pr-1">
-        {cartItems.map((item) => (
-          <div key={item.sku} className="bg-gray-50 p-3 rounded-2xl flex justify-between items-center border border-gray-100">
-            <div>
-              <p className="font-black text-gray-800 text-[11px] uppercase">{item.nombre}</p>
-              <p className="text-[9px] font-bold text-green-600 uppercase">{item.quantity} {item.unidad || 'kg'}</p>
-            </div>
-            <p className="font-black text-gray-900 text-xs">{formatCurrency(item.precio_venta * item.quantity)}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-green-50 rounded-[2rem] p-5 border-2 border-green-100 mb-6 space-y-4">
-        {/* IDENTIDAD FLEXIBLE */}
-        {!user && (
-          <div>
-            <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1 block">Tu Nombre y Apellido</label>
-            <input 
-              type="text" value={guestName} onChange={(e) => setGuestName(e.target.value)}
-              className="w-full bg-white border-2 border-green-200 rounded-2xl py-3 px-4 text-sm font-black outline-none"
-            />
+    <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-gray-100 flex flex-col h-full group transition-all hover:shadow-lg relative">
+      <div className="relative h-40 overflow-hidden shrink-0">
+        <img src={product.url_imagen} alt={product.nombre} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
+        {product.stock_actual !== undefined && product.stock_actual <= 0 && (
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
+            <span className="bg-red-600 text-white text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest rotate-[-5deg] border border-white shadow-xl">Agotado</span>
           </div>
         )}
-
-        <div>
-          <label className="text-[10px] font-black text-green-800 uppercase tracking-widest mb-1 block">Tu Celular</label>
-          <input 
-            type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-white border-2 border-green-200 rounded-2xl py-3 px-4 text-sm font-black outline-none"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <DatePicker selected={deliveryDate} onChange={(date: Date) => setDeliveryDate(date)} minDate={new Date()} dateFormat="dd/MM/yyyy" locale="es" className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold outline-none" />
-          <div className="relative">
-            {availableSlots.length === 0 ? (
-              <div className="bg-red-100 text-red-600 rounded-2xl py-2 px-3 text-[10px] font-black text-center border-2 border-red-200">CERRADO</div>
-            ) : (
-              <select value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} className="w-full bg-white border-2 border-green-200 rounded-2xl py-2 px-3 text-xs font-bold outline-none">
-                {availableSlots.map(slot => <option key={slot} value={slot}>{slot} hrs</option>)}
-              </select>
-            )}
-          </div>
-        </div>
+        {isAdmin && (
+          <button onClick={() => setIsEditing(!isEditing)} className="absolute top-2 right-2 bg-white/90 backdrop-blur-md text-black w-8 h-8 rounded-xl shadow-lg flex items-center justify-center hover:scale-110 transition-all z-10 border border-white/20">
+            {isEditing ? <X size={14}/> : <Settings size={14}/>}
+          </button>
+        )}
       </div>
 
-      <div className="px-2 space-y-2 mb-6">
-        <div className="flex justify-between text-[10px] font-black text-gray-400 uppercase">
-          <span>Subtotal:</span>
-          <span>{formatCurrency(cartTotal)}</span>
-        </div>
-        <div className="flex justify-between text-[10px] font-black text-red-500 uppercase">
-          <span>Envío:</span>
-          <span>{shippingCost === 0 ? '¡GRATIS!' : formatCurrency(shippingCost)}</span>
-        </div>
+      <div className="p-3 flex flex-col flex-1">
+        <h3 className="font-black text-gray-800 text-[10px] leading-tight mb-2 uppercase italic line-clamp-2 h-7">{product.nombre}</h3>
         
-        {/* LEYENDA DE ENVÍO GRATIS */}
-        <p className="text-[8px] font-black text-center text-green-600 uppercase tracking-tighter">
-          🚀 Pedidos mayores a $100 el envío es ¡GRATIS!
-        </p>
+        <div className="mt-auto">
+          {isEditing && isAdmin ? (
+            <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="bg-gray-50 p-1.5 rounded-lg border border-gray-100">
+                  <label className="text-[6px] font-black text-gray-400 uppercase block">Costo</label>
+                  <input type="number" value={newCosto} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setNewCosto(v); setNewPrice((v * MARGEN).toFixed(2)); }} className="w-full bg-transparent text-gray-800 font-black text-[10px] outline-none" />
+                </div>
+                <div className="bg-green-50 p-1.5 rounded-lg border border-green-100">
+                  <label className="text-[6px] font-black text-green-600 uppercase block">Venta</label>
+                  <input type="number" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full bg-transparent text-green-700 font-black text-[10px] outline-none" />
+                </div>
+              </div>
+              <div className="bg-blue-50 p-2 rounded-xl border border-blue-100">
+                <label className="text-[6px] font-black text-blue-600 uppercase block">Entrada ({unitLabel})</label>
+                <input type="number" placeholder="0.00" onChange={(e) => setCompraHoy(parseFloat(e.target.value) || 0)} className="w-full bg-transparent text-blue-800 font-black text-sm outline-none" />
+              </div>
+              <button onClick={handleUpdateStockAndPrice} className="w-full bg-black text-white font-black py-2 rounded-lg text-[8px] uppercase tracking-widest">Sincronizar</button>
+            </div>
+          ) : (
+            <div className="flex justify-between items-end gap-2">
+              <div className="flex flex-col">
+                <span className="text-lg font-black text-gray-900 tracking-tighter leading-none">{formatCurrency(product.precio_venta)}</span>
+                <span className="text-[7px] font-bold text-gray-400 uppercase tracking-widest mt-1">Por {unitLabel}</span>
+              </div>
 
-        <div className="flex justify-between items-center pt-2 border-t-2 border-dashed border-gray-200">
-          <span className="text-xl font-black text-green-900">TOTAL</span>
-          <span className="text-2xl font-black text-green-900">{formatCurrency(totalFinal)}</span>
-        </div>
-        
-        {/* NOTA DE BÁSCULA RESTAURADA */}
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mt-4">
-          <p className="text-[9px] text-amber-700 font-bold leading-tight text-center">
-             ⚠️ Amoree preparará tu pedido y confirmará el total final en base al peso real de la báscula al momento de surtir.
-          </p>
+              {/* ✅ SOLUCIÓN TITANIUM: BOTONES APILADOS VERTICALMENTE */}
+              <div className="flex flex-col items-center bg-gray-100 rounded-xl p-1 gap-1 min-w-[40px]">
+                {quantity === 0 ? (
+                  <button
+                    disabled={product.stock_actual !== undefined && product.stock_actual <= 0}
+                    onClick={() => addToCart(product, step)}
+                    className="bg-green-600 text-white font-black w-8 h-8 rounded-lg hover:bg-green-700 transition-all flex items-center justify-center shadow-sm disabled:bg-gray-300"
+                  >
+                    <Plus size={16} strokeWidth={3} />
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => addToCart(product, step)}
+                      className="bg-white text-green-600 font-black h-7 w-7 rounded-lg shadow-sm active:scale-90 flex items-center justify-center border border-gray-200"
+                    >
+                      <Plus size={14} strokeWidth={3} />
+                    </button>
+                    <span className="font-black text-gray-900 text-[10px] py-0.5">{Number(quantity.toFixed(2))}</span>
+                    <button
+                      onClick={() => decrementCartItem(currentSku, step)}
+                      className="bg-white text-red-500 font-black h-7 w-7 rounded-lg shadow-sm active:scale-90 flex items-center justify-center border border-gray-200"
+                    >
+                      <Minus size={14} strokeWidth={3} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
-
-      <button onClick={handleCheckout} disabled={loading || availableSlots.length === 0} className="w-full bg-gray-900 text-white font-black py-5 rounded-2xl shadow-xl active:scale-95 transition-all text-xs uppercase tracking-[0.2em] disabled:bg-gray-400">
-        {loading ? 'GENERANDO...' : availableSlots.length === 0 ? 'HORARIO CERRADO' : 'Enviar Pedido'}
-      </button>
     </div>
   );
 }
