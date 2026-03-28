@@ -4,7 +4,7 @@ import { useShoppingCart } from '../context/ShoppingCartContext';
 import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Settings, X, Plus, Minus } from 'lucide-react'; // Importamos iconos para mayor claridad
+import { Settings, X, Plus, Minus } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -25,16 +25,11 @@ export default function ProductCard({ product }: ProductCardProps) {
   const quantity = getItemQuantity(currentSku);
   const MARGEN = 1.20;
 
-  const unitLabel = (() => {
-    const n = product.nombre.toLowerCase();
-    const pzaKeywords = ['pieza', 'pza', 'lechuga', 'melón', 'sandía', 'coliflor', 'brócoli', 'piña', 'apio', 'pepino', 'coco', 'papaya'];
-    const manojoKeywords = ['manojo', 'cilantro', 'perejil', 'espinaca', 'acelga', 'rábano', 'cebollita', 'epazote', 'hierbabuena'];
-    if (pzaKeywords.some(k => n.includes(k))) return 'pza';
-    if (manojoKeywords.some(k => n.includes(k))) return 'manojo';
-    return 'kg';
-  })();
+  // ✅ FIX TITANIUM: Usamos la unidad REAL de tu base de datos (Supabase)
+  const unitLabel = (product.unidad || product.Unidad || 'kg').toLowerCase();
 
-  const step = unitLabel === 'kg' ? 0.25 : 1;
+  // ✅ FIX TITANIUM: Si es pza o manojo, el salto es de 1 en 1. Si es kg, es de 0.25.
+  const step = (unitLabel === 'pza' || unitLabel === 'manojo') ? 1 : 0.25;
 
   useEffect(() => {
     if (isEditing && isAdmin) fetchSalesAnalysis();
@@ -114,7 +109,6 @@ export default function ProductCard({ product }: ProductCardProps) {
                 <span className="text-[7px] font-bold text-gray-400 uppercase tracking-widest mt-1">Por {unitLabel}</span>
               </div>
 
-              {/* ✅ SOLUCIÓN TITANIUM: BOTONES APILADOS VERTICALMENTE */}
               <div className="flex flex-col items-center bg-gray-100 rounded-xl p-1 gap-1 min-w-[40px]">
                 {quantity === 0 ? (
                   <button
