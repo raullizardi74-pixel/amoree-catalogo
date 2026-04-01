@@ -82,7 +82,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
     setIsSubmitting(true);
     try {
       const totalNota = items.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
-      
       const { data: compraHeader, error: errH } = await supabase.from('compras').insert({ 
         proveedor_id: 1, 
         proveedor: 'ABASTO CENTRAL',
@@ -97,7 +96,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
       for (const [sku, d] of items) {
         const p = products.find(x => x.sku === sku);
         if (!p) continue;
-
         const cant = Number(d.cantidad);
         const costoUnitario = Number(d.cost);
         const stockActual = Math.max(0, p.stock_actual || 0);
@@ -105,19 +103,12 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         const costoPromedio = ((stockActual * (p.costo || 0)) + (cant * costoUnitario)) / stockTotal;
         
         await supabase.from('compras_detalle').insert({ 
-          compra_id: compraHeader.id, 
-          producto_id: p.id, 
-          sku: p.sku,
-          nombre: p.nombre, 
-          cantidad: cant, 
-          costo_unitario: costoUnitario, 
-          subtotal: cant * costoUnitario 
+          compra_id: compraHeader.id, producto_id: p.id, sku: p.sku,
+          nombre: p.nombre, cantidad: cant, costo_unitario: costoUnitario, subtotal: cant * costoUnitario 
         });
 
         await supabase.from('productos').update({ 
-          costo: Number(costoPromedio.toFixed(2)), 
-          precio_venta: Number(d.prev), 
-          stock_actual: stockTotal 
+          costo: Number(costoPromedio.toFixed(2)), precio_venta: Number(d.prev), stock_actual: stockTotal 
         }).eq('id', p.id);
       }
 
@@ -129,12 +120,12 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const currentTotal = Object.values(registroCompra).reduce((a, b) => a + (Number(b.cantidad) * Number(b.cost) || 0), 0);
   const itemsCompradosCount = Object.values(registroCompra).filter(v => Number(v.cantidad) > 0).length;
 
-  if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center z-[100]"><Zap className="text-green-500 animate-pulse" size={48} /></div>;
+  if (loading) return <div className="py-20 text-center"><Zap className="text-green-500 animate-pulse mx-auto" size={48} /><p className="mt-4 text-[10px] font-black uppercase text-gray-500">Analizando Ruta...</p></div>;
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col font-sans text-white overflow-hidden animate-in fade-in">
-      {/* HEADER */}
-      <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#050505] shadow-2xl">
+    <div className="flex flex-col font-sans text-white bg-black min-h-screen">
+      {/* HEADER LOCAL */}
+      <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#050505] sticky top-0 z-[60]">
         <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl active:scale-90"><X size={20} /></button>
         <div className="text-center">
           <h2 className="text-xl font-black uppercase italic tracking-tighter">Misión <span className="text-green-500">Central</span></h2>
@@ -142,11 +133,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         </div>
         <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl border border-white/10">
           <ClipboardList size={20} className={itemsCompradosCount > 0 ? 'text-green-500' : 'text-gray-500'} />
-          {analysis.filter(p => p.urg < 3 && p.activo !== false).length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center">
-              {analysis.filter(p => p.urg < 3 && p.activo !== false).length}
-            </span>
-          )}
         </button>
       </div>
 
@@ -157,7 +143,7 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-48 no-scrollbar">
+      <div className="flex-1 p-4 space-y-4 pb-48 no-scrollbar">
         {Array.from(new Set(analysis.map(p => p.categoria || 'Otros'))).map(cat => {
           const items = analysis.filter(p => (p.categoria || 'Otros') === cat && (searchTerm === '' || p.nombre.toLowerCase().includes(searchTerm.toLowerCase())));
           if (items.length === 0) return null;
@@ -202,42 +188,6 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         })}
       </div>
 
-      {/* ✅ MODAL DE CHECKLIST: EL RECUERDO DE HUGO */}
-      {showChecklist && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-in slide-in-from-bottom">
-          <div className="p-8 border-b border-white/10 flex justify-between items-center bg-[#050505]">
-            <div><h3 className="text-3xl font-black uppercase italic tracking-tighter">Lista de <span className="text-green-500">Misión</span></h3></div>
-            <button onClick={() => setShowChecklist(false)} className="bg-white/5 p-4 rounded-full"><X size={24}/></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-8">
-            <div>
-              <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-4">🛒 POR COMPRAR</p>
-              <div className="space-y-3">
-                {analysis.filter(p => p.urg < 3 && p.activo !== false && !registroCompra[p.sku]?.cantidad).map(p => (
-                  <div key={p.sku} className="bg-white/[0.02] border border-white/5 p-5 rounded-[25px] flex justify-between items-center">
-                    <p className="text-xs font-black uppercase">{p.nombre}</p>
-                    <p className="text-[10px] text-gray-500 font-bold">{p.sug} {p.unidad}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-4">✅ YA EN CAMIONETA</p>
-              <div className="space-y-3">
-                {Object.entries(registroCompra).filter(([_, v]) => Number(v.cantidad) > 0).map(([sku, v]) => (
-                  <div key={sku} className="bg-green-500/5 border border-green-500/20 p-5 rounded-[25px] flex justify-between items-center">
-                    <p className="text-xs font-black uppercase text-white">{v.nombre}</p>
-                    <p className="text-xs font-black text-green-500">{v.cantidad}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="p-8"><button onClick={() => setShowChecklist(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-widest">Regresar a Surtir</button></div>
-        </div>
-      )}
-
-      {/* FOOTER */}
       <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60] shadow-2xl">
         <div className="max-w-7xl mx-auto flex justify-between items-end mb-4">
           <div><p className="text-[9px] font-black text-gray-600 uppercase mb-1">Inversión Actual</p><p className="text-3xl font-black text-white">{formatCurrency(currentTotal)}</p></div>
