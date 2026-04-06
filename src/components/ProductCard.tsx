@@ -4,15 +4,18 @@ import { useShoppingCart } from '../context/ShoppingCartContext';
 import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Settings, X, Plus, Minus } from 'lucide-react';
+import { Settings, X, Plus, Minus, Zap } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
 }
 
-export default function ProductCard({ product }: ProductCardProps) {
+export default function ProductCard({ product: initialProduct }: ProductCardProps) {
   const { addToCart, decrementCartItem, getItemQuantity } = useShoppingCart();
   const { isAdmin } = useAuth();
+  
+  // ✅ ESTADO LOCAL PARA TIEMPO REAL
+  const [product, setProduct] = useState(initialProduct);
   const [isEditing, setIsEditing] = useState(false);
   
   const [newCosto, setNewCosto] = useState(product.costo || 0);
@@ -24,13 +27,40 @@ export default function ProductCard({ product }: ProductCardProps) {
   const currentSku = product.sku || product.SKU || '';
   const quantity = getItemQuantity(currentSku);
   const MARGEN = 1.20;
-
-  // ✅ FIX TITANIUM: Usamos la unidad REAL de tu base de datos (Supabase)
   const unitLabel = (product.unidad || product.Unidad || 'kg').toLowerCase();
-
-  // ✅ FIX TITANIUM: Si es pza o manojo, el salto es de 1 en 1. Si es kg, es de 0.25.
   const step = (unitLabel === 'pza' || unitLabel === 'manojo') ? 1 : 0.25;
 
+  // 🛡️ MARGEN DE SEGURIDAD TITANIUM
+  // Restamos 0.30kg al stock real para evitar discrepancias de báscula
+  const stockReal = product.stock_actual || 0;
+  const stockSeguro = unitLabel === 'kg' ? Math.max(0, stockReal - 0.30) : stockReal;
+  const puedeAñadirMas = (quantity + step) <= stockSeguro;
+
+  // 🎨 LÓGICA DE COLORES OPAL
+  const getStockColor = () => {
+    if (stockSeguro <= 0) return 'text-gray-400';
+    if (stockSeguro < 1) return 'text-[#FF3131] drop-shadow-[0_0_5px_rgba(255,49,49,0.5)]'; // Rojo Neón
+    if (stockSeguro < 3) return 'text-[#FF914D]'; // Naranja
+    return 'text-white'; // Blanco saludable
+  };
+
+  // ⚡ LISTENER EN TIEMPO REAL
+  useEffect(() => {
+    const channel = supabase
+      .channel(`realtime-product-${currentSku}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'productos', filter: `sku=eq.${currentSku}` },
+        (payload) => {
+          setProduct(payload.new as Product);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentSku]);
+
+  // Se mantiene análisis de ventas para Admin
   useEffect(() => {
     if (isEditing && isAdmin) fetchSalesAnalysis();
   }, [isEditing]);
@@ -55,12 +85,23 @@ export default function ProductCard({ product }: ProductCardProps) {
 
   const handleUpdateStockAndPrice = async () => {
     try {
-      await supabase.from('productos').update({ costo: newCosto, precio_venta: parseFloat(newPrice), stock_actual: (product.stock_actual || 0) + compraHoy }).eq('sku', currentSku);
+      await supabase.from('productos').update({ 
+        costo: newCosto, 
+        precio_venta: parseFloat(newPrice), 
+        stock_actual: (product.stock_actual || 0) + compraHoy 
+      }).eq('sku', currentSku);
+      
       if (compraHoy > 0) {
-        await supabase.from('compras').insert([{ producto_sku: currentSku, nombre_producto: product.nombre, cantidad: compraHoy, unidad: unitLabel, costo_unitario: newCosto, total_compra: compraHoy * newCosto }]);
+        await supabase.from('compras').insert([{ 
+          producto_sku: currentSku, 
+          nombre_producto: product.nombre, 
+          cantidad: compraHoy, 
+          unidad: unitLabel, 
+          costo_unitario: newCosto, 
+          total_compra: compraHoy * newCosto 
+        }]);
       }
       setIsEditing(false);
-      window.location.reload(); 
     } catch (e) { alert('Error de sincronización.'); }
   };
 
@@ -68,11 +109,14 @@ export default function ProductCard({ product }: ProductCardProps) {
     <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-gray-100 flex flex-col h-full group transition-all hover:shadow-lg relative">
       <div className="relative h-40 overflow-hidden shrink-0">
         <img src={product.url_imagen} alt={product.nombre} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
-        {product.stock_actual !== undefined && product.stock_actual <= 0 && (
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
-            <span className="bg-red-600 text-white text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest rotate-[-5deg] border border-white shadow-xl">Agotado</span>
+        
+        {/* INDICADOR DE AGOTADO MEJORADO */}
+        {stockSeguro <= 0 && (
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center">
+            <span className="bg-red-600 text-white text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-[0.2em] rotate-[-5deg] border-2 border-white shadow-2xl">Agotado</span>
           </div>
         )}
+
         {isAdmin && (
           <button onClick={() => setIsEditing(!isEditing)} className="absolute top-2 right-2 bg-white/90 backdrop-blur-md text-black w-8 h-8 rounded-xl shadow-lg flex items-center justify-center hover:scale-110 transition-all z-10 border border-white/20">
             {isEditing ? <X size={14}/> : <Settings size={14}/>}
@@ -106,23 +150,30 @@ export default function ProductCard({ product }: ProductCardProps) {
             <div className="flex justify-between items-end gap-2">
               <div className="flex flex-col">
                 <span className="text-lg font-black text-gray-900 tracking-tighter leading-none">{formatCurrency(product.precio_venta)}</span>
-                <span className="text-[7px] font-bold text-gray-400 uppercase tracking-widest mt-1">Por {unitLabel}</span>
+                
+                {/* ✅ CONTADOR DE EXISTENCIAS DINÁMICO */}
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <div className={`text-[8px] font-black px-2 py-0.5 rounded-md bg-black ${getStockColor()}`}>
+                    {stockSeguro <= 0 ? 'SIN STOCK' : `${stockSeguro} ${unitLabel}`}
+                  </div>
+                </div>
               </div>
 
               <div className="flex flex-col items-center bg-gray-100 rounded-xl p-1 gap-1 min-w-[40px]">
                 {quantity === 0 ? (
                   <button
-                    disabled={product.stock_actual !== undefined && product.stock_actual <= 0}
+                    disabled={!puedeAñadirMas}
                     onClick={() => addToCart(product, step)}
-                    className="bg-green-600 text-white font-black w-8 h-8 rounded-lg hover:bg-green-700 transition-all flex items-center justify-center shadow-sm disabled:bg-gray-300"
+                    className="bg-green-600 text-white font-black w-8 h-8 rounded-lg hover:bg-green-700 transition-all flex items-center justify-center shadow-sm disabled:bg-gray-300 disabled:grayscale"
                   >
                     <Plus size={16} strokeWidth={3} />
                   </button>
                 ) : (
                   <>
                     <button
+                      disabled={!puedeAñadirMas}
                       onClick={() => addToCart(product, step)}
-                      className="bg-white text-green-600 font-black h-7 w-7 rounded-lg shadow-sm active:scale-90 flex items-center justify-center border border-gray-200"
+                      className="bg-white text-green-600 font-black h-7 w-7 rounded-lg shadow-sm active:scale-90 flex items-center justify-center border border-gray-200 disabled:opacity-30"
                     >
                       <Plus size={14} strokeWidth={3} />
                     </button>
