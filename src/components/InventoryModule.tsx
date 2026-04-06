@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
 import { Scanner } from './Scanner';
@@ -61,6 +61,18 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
     setIsEditing(true);
   };
 
+  const handleScanSuccess = (sku: string) => {
+    const found = products.find(p => p.sku === sku);
+    if (found) {
+      openProductSheet(found);
+    } else {
+      setFormData({ sku, nombre: '', costo: 0, stock_actual: 0 });
+      setCostHistory([]);
+      setIsEditing(true);
+    }
+    setShowScanner(false);
+  };
+
   const startMision = (provId: string) => {
     const items = products.filter(p => {
       const matchProv = provId === 'TODOS' || p.proveedor_id?.toString() === provId;
@@ -108,6 +120,7 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
     return { capitalTotal, agotados };
   }, [products]);
 
+  // ✅ VISTA DE MISIÓN (CHECKLIST)
   if (activeView === 'mision') {
     return (
       <div className="min-h-screen bg-[#050505] text-white p-6 pb-64 animate-in slide-in-from-bottom duration-500">
@@ -119,7 +132,7 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
           </div>
 
           <div className="bg-green-600/10 border border-green-500/20 p-8 rounded-[40px] mb-8 text-center">
-            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.3em] mb-2">Efectivo a llevar (con 10% Buffer)</p>
+            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.3em] mb-2">Efectivo a llevar (+10% Buffer)</p>
             <h3 className="text-5xl font-black italic text-white">{formatCurrency(totalsMision.totalConBuffer)}</h3>
           </div>
 
@@ -128,7 +141,7 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
               <div key={item.id} className="bg-[#0A0A0A] border border-white/5 p-6 rounded-[35px] flex flex-col md:flex-row gap-6 items-center">
                 <div className="flex-1">
                   <h4 className="text-lg font-black uppercase italic leading-none">{item.nombre}</h4>
-                  <p className="text-[9px] font-bold text-gray-500 mt-2">STOCK: {Number(item.stock_actual.toFixed(3))} {item.unidad}</p>
+                  <p className="text-[9px] font-bold text-gray-500 mt-2 uppercase tracking-widest">STOCK: {Number(item.stock_actual.toFixed(3))} {item.unidad}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
                   <div className="bg-black p-4 rounded-2xl border border-white/5">
@@ -155,8 +168,8 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
               <p className="text-xs font-black uppercase tracking-widest text-gray-400">Total Neto:</p>
               <p className="text-2xl font-black">{formatCurrency(totalsMision.neto)}</p>
             </div>
-            <button onClick={() => alert("REGISTRANDO COMPRA Y GASTO...")} className="flex-[2] bg-green-600 text-white py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs shadow-2xl active:scale-95 transition-all">
-              Confirmar y Registrar Gasto en Caja
+            <button onClick={() => alert("REGISTRANDO COMPRA EN BBDD...")} className="flex-[2] bg-white text-black py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs active:scale-95 transition-all shadow-2xl">
+              Confirmar y Registrar Gasto en Caja 🚀
             </button>
           </div>
         </div>
@@ -165,10 +178,10 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8 pb-40 animate-in fade-in">
+    <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8 pb-40 animate-in fade-in duration-500">
       <div className="max-w-7xl mx-auto">
         
-        {/* INDICADORES */}
+        {/* INDICADORES ESTRATÉGICOS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           <button onClick={() => setActiveFilter(activeFilter === 'inversion' ? 'todos' : 'inversion')} className={`p-6 rounded-[2.5rem] border transition-all text-left relative overflow-hidden group ${activeFilter === 'inversion' ? 'bg-green-600 border-green-400 shadow-2xl' : 'bg-white/5 border-white/10'}`}>
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-all"><DollarSign size={48}/></div>
@@ -195,13 +208,13 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
           <div className="flex gap-4">
             <div className="flex-1 relative">
               <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-600" size={20} />
-              <input type="text" placeholder="BUSCAR EN ESTA VISTA..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-full py-5 pl-16 text-xs font-black uppercase outline-none focus:border-green-500 shadow-2xl" />
+              <input type="text" placeholder="BUSCAR PRODUCTO O SKU..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-full py-5 pl-16 text-xs font-black uppercase outline-none focus:border-green-500 shadow-2xl" />
             </div>
             <button onClick={() => setShowScanner(true)} className="bg-green-600 text-white p-5 rounded-full shadow-2xl active:scale-90"><Camera size={24}/></button>
           </div>
         </div>
 
-        {/* LISTA */}
+        {/* LISTA DE PRODUCTOS */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {processedProducts.map(p => (
             <div key={p.id} className={`bg-[#0A0A0A] border rounded-[35px] p-6 transition-all relative overflow-hidden ${p.estancado ? 'border-blue-500/30' : 'border-white/5'}`}>
@@ -225,7 +238,7 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* ✅ BOTÓN DE MISIÓN FLOTANTE REPARADO */}
+      {/* ✅ BOTÓN DE MISIÓN FLOTANTE */}
       {selectedProviderId !== 'TODOS' && (
         <div 
           onClick={() => startMision(selectedProviderId)}
@@ -240,28 +253,70 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {/* MODAL RADAR PRO */}
+      {/* ✅ MODAL RADAR PRO (RESTURADO COMPLETO) */}
       {isEditing && (
         <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4">
-           <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-8 w-full max-w-lg relative">
+           <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-8 w-full max-w-lg relative animate-in zoom-in duration-300">
               <button onClick={() => setIsEditing(false)} className="absolute top-8 right-8 text-gray-500"><X/></button>
               <h3 className="text-2xl font-black uppercase italic mb-8 text-green-500">Radar de Producto</h3>
+              
               <div className="space-y-6">
+                 {/* FOTO Y NOMBRE */}
                  <div className="flex gap-4 bg-black p-4 rounded-3xl border border-white/5">
                     <img src={formData.url_imagen} className="w-20 h-20 rounded-2xl object-cover" />
-                    <div><p className="text-xl font-black uppercase leading-none">{formData.nombre}</p><p className="text-[9px] font-black text-gray-500 uppercase mt-2">SKU: {formData.sku}</p></div>
-                 </div>
-                 <div className="bg-white/[0.02] p-5 rounded-3xl border border-white/5">
-                    <p className="text-[8px] font-black text-gray-400 uppercase mb-4 flex items-center gap-2"><History size={10}/> Historial de Costos</p>
-                    <div className="space-y-3">
-                      {costHistory.map((h, i) => (
-                        <div key={i} className="flex justify-between items-center text-[11px] font-black border-b border-white/5 pb-2">
-                          <span className="text-gray-500">{format(new Date(h.created_at), 'dd MMM yy')}</span><span className="text-white">{formatCurrency(h.costo_unitario)}</span>
-                        </div>
-                      ))}
+                    <div>
+                      <p className="text-xl font-black uppercase leading-none">{formData.nombre}</p>
+                      <p className="text-[9px] font-black text-gray-500 uppercase mt-2 tracking-widest italic">SKU: {formData.sku}</p>
                     </div>
                  </div>
-                 <button onClick={() => setIsEditing(false)} className="w-full bg-white text-black py-5 rounded-2xl font-black uppercase text-[10px]">Cerrar Radar</button>
+
+                 {/* 📈 HISTORIAL DE COSTOS */}
+                 <div className="bg-white/[0.02] p-5 rounded-3xl border border-white/5">
+                    <p className="text-[8px] font-black text-gray-400 uppercase mb-4 flex items-center gap-2 tracking-widest">
+                      <History size={10} className="text-green-500"/> Historial de Costos Pagados
+                    </p>
+                    <div className="space-y-3">
+                      {costHistory.length > 0 ? costHistory.map((h, i) => (
+                        <div key={i} className="flex justify-between items-center text-[11px] font-black border-b border-white/5 pb-2">
+                          <span className="text-gray-500">{format(new Date(h.created_at), 'dd MMM yy')}</span>
+                          <span className="text-white">{formatCurrency(h.costo_unitario)}</span>
+                        </div>
+                      )) : <p className="text-[10px] text-gray-600 italic">Sin historial de compras registrado.</p>}
+                    </div>
+                 </div>
+
+                 {/* EDICIÓN RÁPIDA */}
+                 <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-black p-5 rounded-3xl border border-white/5 shadow-inner">
+                      <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">Costo Actual</label>
+                      <input 
+                        type="number" 
+                        value={formData.costo} 
+                        onChange={e => setFormData({...formData, costo: parseFloat(e.target.value)})} 
+                        className="w-full bg-transparent text-2xl font-black text-white outline-none" 
+                      />
+                    </div>
+                    <div className="bg-black p-5 rounded-3xl border border-white/5 shadow-inner">
+                      <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">Stock Actual</label>
+                      <input 
+                        type="number" 
+                        value={formData.stock_actual} 
+                        onChange={e => setFormData({...formData, stock_actual: parseFloat(e.target.value)})} 
+                        className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" 
+                      />
+                    </div>
+                 </div>
+
+                 {/* ACCIÓN */}
+                 <button 
+                  onClick={async () => {
+                    const { error } = await supabase.from('productos').update({ costo: formData.costo, stock_actual: formData.stock_actual }).eq('id', formData.id);
+                    if (!error) { setIsEditing(false); fetchInitialData(); }
+                  }} 
+                  className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] active:scale-95 transition-all shadow-2xl"
+                 >
+                   Guardar Cambios Titanium
+                 </button>
               </div>
            </div>
         </div>
