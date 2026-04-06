@@ -48,39 +48,73 @@ export default function ShoppingCart() {
   const shippingCost = (cartTotal > 0 && cartTotal < 100) ? 30 : 0;
   const totalFinal = cartTotal + shippingCost;
 
+  // ✅ LOGICA DE ACTUALIZACIÓN DE STOCK INMEDIATA
+  const updateInventoryAfterPurchase = async () => {
+    const updates = cartItems.map(async (item) => {
+      const sku = item.sku || item.SKU;
+      // 1. Obtenemos stock actual de la nube
+      const { data: prod } = await supabase
+        .from('productos')
+        .select('stock_actual')
+        .eq('sku', sku)
+        .single();
+      
+      const currentStock = prod?.stock_actual || 0;
+      // 2. Restamos lo que el cliente se está llevando
+      const newStock = Number((currentStock - item.quantity).toFixed(2));
+      
+      return supabase
+        .from('productos')
+        .update({ stock_actual: newStock })
+        .eq('sku', sku);
+    });
+    await Promise.all(updates);
+  };
+
   const handleCheckout = async () => {
     const finalName = user?.user_metadata?.full_name || guestName;
     if (!finalName || !phone || phone.length < 10) return alert('Datos incompletos.');
+    
     setLoading(true);
     const messageDate = format(deliveryDate, 'dd/MM/yyyy');
+    
     try {
+      // ⚡ PASO 1: DESCONTAR DEL INVENTARIO REAL
+      await updateInventoryAfterPurchase();
+
+      // ⚡ PASO 2: CREAR EL PEDIDO
       await supabase.from('pedidos').insert([{
         usuario_email: user?.email || `Invitado_${phone}`,
         nombre_cliente: finalName,
         detalle_pedido: cartItems,
         total: totalFinal,
-        estado: 'Pendience',
+        estado: 'Pendiente', // Corregido el typo "Pendience"
         telefono_cliente: `${phone} (E: ${messageDate} ${deliveryTime})`
       }]);
+
+      // ⚡ PASO 3: ENVIAR WHATSAPP
       let message = `*NUEVO PEDIDO - AMOREE*\n--------------------------\n👤 CLIENTE: ${finalName}\n📅 FECHA: ${messageDate}\n⏰ HORA: ${deliveryTime} hrs\n📞 TEL: ${phone}\n--------------------------\n`;
       cartItems.forEach(item => {
         message += `• ${item.quantity}${item.unidad || 'kg'} x ${item.nombre} = ${formatCurrency(item.precio_venta * item.quantity)}\n`;
       });
       message += `--------------------------\n🚚 Envío: ${shippingCost === 0 ? '¡GRATIS!' : formatCurrency(shippingCost)}\n💰 *TOTAL APROX: ${formatCurrency(totalFinal)}*\n\n⚠️ Amoree confirmará el total final en base al peso real.\n\n_Favor de confirmar._`;
+      
       window.open(`https://wa.me/522215306435?text=${encodeURIComponent(message)}`, '_blank');
+      
       setCartItems([]);
       setIsOpen(false);
-    } catch (e) { alert("Error."); } finally { setLoading(false); }
+    } catch (e) { 
+      console.error(e);
+      alert("Error al procesar el inventario."); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   return (
     <div className={`fixed bottom-0 left-0 right-0 z-[1000] transition-all duration-500 ${isOpen ? 'h-full' : 'h-20'}`}>
-      
       {isOpen && <div className="absolute inset-0 bg-black/60 backdrop-blur-sm -z-10" onClick={() => setIsOpen(false)} />}
-
       <div className={`h-full bg-white transition-all overflow-hidden ${isOpen ? 'rounded-t-0' : 'rounded-t-[2.5rem] shadow-2xl border-t border-gray-100'}`}>
-        
-        {/* CABECERA CERRADA */}
         {!isOpen && (
           <div onClick={() => cartItems.length > 0 && setIsOpen(true)} className="h-20 px-6 flex justify-between items-center cursor-pointer">
             <div className="flex items-center gap-4">
@@ -93,12 +127,8 @@ export default function ShoppingCart() {
             {cartItems.length > 0 && <ChevronUp className="text-gray-400 animate-bounce" />}
           </div>
         )}
-
-        {/* ✅ VISTA ABIERTA: BOTÓN DE REGRESO FLOTANTE ARRIBA */}
         {isOpen && (
           <div className="flex flex-col h-full bg-gray-50">
-            
-            {/* BARRA SUPERIOR DE ACCIÓN FIJA */}
             <div className="bg-green-600 px-6 py-5 flex justify-between items-center shrink-0 shadow-xl relative z-[1001]">
               <button 
                 onClick={(e) => { e.stopPropagation(); setIsOpen(false); }}
@@ -108,10 +138,8 @@ export default function ShoppingCart() {
               </button>
               <button onClick={() => setIsOpen(false)} className="bg-white/20 p-2 rounded-full text-white"><X size={22} /></button>
             </div>
-
             <div className="flex-1 overflow-y-auto px-6 pt-6 pb-40 no-scrollbar">
               <h2 className="text-2xl font-black text-gray-900 mb-6 uppercase italic tracking-tighter">Tu Selección</h2>
-              
               <div className="space-y-3 mb-8">
                 {cartItems.map((item) => {
                    const step = (item.unidad || 'kg').toLowerCase() === 'kg' ? 0.25 : 1;
@@ -134,8 +162,6 @@ export default function ShoppingCart() {
                   );
                 })}
               </div>
-
-              {/* DATOS DE ENVÍO */}
               <div className="bg-white rounded-[2.5rem] p-6 border border-gray-100 mb-8 space-y-4 shadow-sm">
                 {!user && <input type="text" placeholder="NOMBRE COMPLETO" value={guestName} onChange={(e) => setGuestName(e.target.value)} className="w-full bg-gray-50 border-2 border-gray-50 rounded-2xl py-3 px-4 text-sm font-black outline-none" />}
                 <input type="tel" placeholder="CELULAR (10 DÍGITOS)" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full bg-gray-50 border-2 border-gray-50 rounded-2xl py-3 px-4 text-sm font-black outline-none" />
@@ -146,7 +172,6 @@ export default function ShoppingCart() {
                   </select>
                 </div>
               </div>
-
               <div className="px-2 space-y-2 mb-10">
                 <div className="flex justify-between text-[10px] font-black text-gray-400 uppercase"><span>Subtotal:</span><span>{formatCurrency(cartTotal)}</span></div>
                 <div className="flex justify-between text-[10px] font-black text-red-500 uppercase"><span>Envío:</span><span>{shippingCost === 0 ? '¡GRATIS!' : formatCurrency(shippingCost)}</span></div>
@@ -155,7 +180,7 @@ export default function ShoppingCart() {
                   <span className="text-3xl font-black text-green-900 tracking-tighter">{formatCurrency(totalFinal)}</span>
                 </div>
                 <button onClick={handleCheckout} disabled={loading} className="w-full bg-green-600 text-white font-black py-6 rounded-3xl shadow-2xl text-[11px] uppercase tracking-[0.2em] mt-8 flex items-center justify-center gap-3">
-                  <Send size={18}/> ENVIAR PEDIDO A WHATSAPP
+                  {loading ? 'PROCESANDO...' : <><Send size={18}/> ENVIAR PEDIDO A WHATSAPP</>}
                 </button>
               </div>
             </div>
