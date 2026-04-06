@@ -29,17 +29,29 @@ export function ShoppingCartProvider({ children }: { children: ReactNode }) {
   };
 
   const addToCart = (product: Product, step: any = 0.25) => {
-    // Seguridad absoluta: si step no es un número (por ejemplo, un evento de clic), forzamos 0.25
     const numericStep = typeof step === 'number' ? step : 0.25;
+    const unitLabel = (product.unidad || 'kg').toLowerCase();
+    
+    // 🛡️ MARGEN DE SEGURIDAD TITANIUM GLOBAL
+    const stockReal = product.stock_actual || 0;
+    const stockSeguro = unitLabel === 'kg' ? Math.max(0, stockReal - 0.30) : stockReal;
     
     setCartItems(prevItems => {
       const productSku = product.sku || product.SKU;
       const existingItem = prevItems.find(item => (item.sku || item.SKU) === productSku);
       
+      const currentQty = existingItem ? existingItem.quantity : 0;
+      const nextQty = Number((currentQty + numericStep).toFixed(2));
+
+      // ✅ BLOQUEO DE SEGURIDAD: No permitir añadir más allá del stock seguro
+      if (nextQty > stockSeguro) {
+        return prevItems;
+      }
+      
       if (existingItem) {
         return prevItems.map(item =>
           (item.sku || item.SKU) === productSku 
-            ? { ...item, quantity: Number((existingItem.quantity + numericStep).toFixed(2)) } 
+            ? { ...item, quantity: nextQty } 
             : item
         );
       }
