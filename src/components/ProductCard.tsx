@@ -30,11 +30,13 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
   const unitLabel = (product.unidad || product.Unidad || 'kg').toLowerCase();
   const step = (unitLabel === 'pza' || unitLabel === 'manojo') ? 1 : 0.25;
 
-  // 🛡️ MARGEN DE SEGURIDAD TITANIUM
-  // Restamos 0.30kg al stock real para evitar discrepancias de báscula
+  // 🛡️ MARGEN DE SEGURIDAD TITANIUM + FIX DECIMALES
   const stockReal = product.stock_actual || 0;
-  const stockSeguro = unitLabel === 'kg' ? Math.max(0, stockReal - 0.30) : stockReal;
-  const puedeAñadirMas = (quantity + step) <= stockSeguro;
+  const rawStockSeguro = unitLabel === 'kg' ? Math.max(0, stockReal - 0.30) : stockReal;
+  // ✅ FIX ATÓMICO: Forzamos 3 decimales y convertimos a número para limpiar ceros extra
+  const stockSeguro = Number(rawStockSeguro.toFixed(3));
+  
+  const puedeAñadirMas = Number((quantity + step).toFixed(3)) <= stockSeguro;
 
   // 🎨 LÓGICA DE COLORES OPAL
   const getStockColor = () => {
@@ -60,7 +62,7 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
     return () => { supabase.removeChannel(channel); };
   }, [currentSku]);
 
-  // Se mantiene análisis de ventas para Admin
+  // Análisis de ventas para Admin
   useEffect(() => {
     if (isEditing && isAdmin) fetchSalesAnalysis();
   }, [isEditing]);
@@ -85,10 +87,13 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
 
   const handleUpdateStockAndPrice = async () => {
     try {
+      // ✅ FIX DECIMALES: Saneamos el stock antes de subir a Supabase
+      const nuevoStockCalculado = Number(((product.stock_actual || 0) + compraHoy).toFixed(3));
+
       await supabase.from('productos').update({ 
         costo: newCosto, 
         precio_venta: parseFloat(newPrice), 
-        stock_actual: (product.stock_actual || 0) + compraHoy 
+        stock_actual: nuevoStockCalculado 
       }).eq('sku', currentSku);
       
       if (compraHoy > 0) {
@@ -98,7 +103,7 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
           cantidad: compraHoy, 
           unidad: unitLabel, 
           costo_unitario: newCosto, 
-          total_compra: compraHoy * newCosto 
+          total_compra: Number((compraHoy * newCosto).toFixed(2)) 
         }]);
       }
       setIsEditing(false);
@@ -142,7 +147,7 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
               </div>
               <div className="bg-blue-50 p-2 rounded-xl border border-blue-100">
                 <label className="text-[6px] font-black text-blue-600 uppercase block">Entrada ({unitLabel})</label>
-                <input type="number" placeholder="0.00" onChange={(e) => setCompraHoy(parseFloat(e.target.value) || 0)} className="w-full bg-transparent text-blue-800 font-black text-sm outline-none" />
+                <input type="number" placeholder="0.00" step="0.001" onChange={(e) => setCompraHoy(parseFloat(e.target.value) || 0)} className="w-full bg-transparent text-blue-800 font-black text-sm outline-none" />
               </div>
               <button onClick={handleUpdateStockAndPrice} className="w-full bg-black text-white font-black py-2 rounded-lg text-[8px] uppercase tracking-widest">Sincronizar</button>
             </div>
@@ -151,7 +156,7 @@ export default function ProductCard({ product: initialProduct }: ProductCardProp
               <div className="flex flex-col">
                 <span className="text-lg font-black text-gray-900 tracking-tighter leading-none">{formatCurrency(product.precio_venta)}</span>
                 
-                {/* ✅ CONTADOR DE EXISTENCIAS DINÁMICO */}
+                {/* ✅ CONTADOR DE EXISTENCIAS DINÁMICO SANEADO */}
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <div className={`text-[8px] font-black px-2 py-0.5 rounded-md bg-black ${getStockColor()}`}>
                     {stockSeguro <= 0 ? 'SIN STOCK' : `${stockSeguro} ${unitLabel}`}
