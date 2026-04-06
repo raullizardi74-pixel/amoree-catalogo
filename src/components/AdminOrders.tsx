@@ -11,7 +11,7 @@ import AuditoriaModule from './AuditoriaModule';
 import { format } from 'date-fns';
 import { 
   Package, ShoppingBag, Users, BarChart3, Truck, 
-  Calculator, X, ShieldCheck, Search, Scale, CheckCircle2, Send, CreditCard, Wallet
+  Calculator, X, ShieldCheck, Search, Scale, CheckCircle2, Send, CreditCard, Wallet, Trash2
 } from 'lucide-react';
 
 export default function AdminOrders() {
@@ -64,7 +64,39 @@ export default function AdminOrders() {
 
   useEffect(() => { fetchData(); }, [view]);
 
-  // ✅ FIX WhatsApp: Toma primeros 10 dígitos
+  // ✅ FUNCIONES DE AJUSTE DE INVENTARIO ATÓMICO (NUEVO)
+  
+  // 1. Reversión Total (Para Cancelaciones)
+  const reverseInventory = async (detallePedido: any[]) => {
+    const updates = detallePedido.map(async (item) => {
+      const sku = item.sku || item.SKU;
+      const { data: prod } = await supabase.from('productos').select('stock_actual').eq('sku', sku).single();
+      const currentStock = prod?.stock_actual || 0;
+      return supabase.from('productos').update({ stock_actual: Number((currentStock + item.quantity).toFixed(2)) }).eq('sku', sku);
+    });
+    await Promise.all(updates);
+  };
+
+  // 2. Ajuste por Diferencia de Pesaje (Hugo en Báscula)
+  const adjustInventoryByWeightDiff = async (originalItems: any[], surtidoItems: any[]) => {
+    const updates = originalItems.map(async (original) => {
+      const sku = original.sku || original.SKU;
+      const surtido = surtidoItems.find(i => (i.sku || i.SKU) === sku);
+      if (!surtido) return;
+
+      // Diferencia: lo que se descontó al pedir - lo que Hugo pesó realmente
+      const diff = Number((original.quantity - surtido.quantity).toFixed(2));
+      
+      if (diff !== 0) {
+        const { data: prod } = await supabase.from('productos').select('stock_actual').eq('sku', sku).single();
+        const currentStock = prod?.stock_actual || 0;
+        // Si diff es positivo (pesó menos), regresa al stock. Si es negativo (pesó más), descuenta más.
+        await supabase.from('productos').update({ stock_actual: Number((currentStock + diff).toFixed(2)) }).eq('sku', sku);
+      }
+    });
+    await Promise.all(updates);
+  };
+
   const sendWA = (telefono: string, mensaje: string) => {
     const onlyNumbers = (telefono || '').replace(/\D/g, '');
     const cleanTel = onlyNumbers.slice(0, 10);
@@ -77,7 +109,7 @@ export default function AdminOrders() {
 
   const openWeighing = (order: any) => {
     setSelectedOrder(order);
-    setTempItems([...order.detalle_pedido]);
+    setTempItems(JSON.parse(JSON.stringify(order.detalle_pedido))); // Clonación profunda para evitar bugs
     setIsWeighing(true);
   };
 
@@ -95,6 +127,9 @@ export default function AdminOrders() {
   const saveAndNotifySurtido = async () => {
     const finalTotal = calculateTempTotal();
     try {
+      // ⚡ AJUSTE DE STOCK POR DIFERENCIA DE PESAJE
+      await adjustInventoryByWeightDiff(selectedOrder.detalle_pedido, tempItems);
+
       await supabase.from('pedidos').update({ 
         detalle_pedido: tempItems, 
         total: finalTotal, 
@@ -129,6 +164,16 @@ export default function AdminOrders() {
       sendWA(order.telefono_cliente, msg);
       fetchData();
     } catch (e) { alert("Error."); }
+  };
+
+  // ✅ FUNCIÓN DE CANCELACIÓN CON REVERSIÓN DE STOCK
+  const cancelOrder = async (order: any) => {
+    if (!window.confirm("¿Seguro que quieres cancelar? El stock regresará al inventario.")) return;
+    try {
+      await reverseInventory(order.detalle_pedido);
+      await supabase.from('pedidos').update({ estado: 'Cancelado' }).eq('id', order.id);
+      fetchData();
+    } catch (e) { alert("Error al cancelar."); }
   };
 
   const getFilteredOrders = () => {
@@ -193,7 +238,7 @@ export default function AdminOrders() {
               </div>
               <div className="flex-1 w-full relative">
                  <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-600" size={18} />
-                 <input type="text" placeholder="BUSCAR PEDIDO..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/5 rounded-[22px] py-4 pl-16 pr-8 text-[10px] font-black uppercase outline-none" />
+                 <input type="text" placeholder="BUSCAR PEDIDO..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/5 rounded-[22px] py-4 pl-16 pr-8 text-[10px] font-black uppercase outline-none focus:border-green-500" />
               </div>
               <button onClick={prepararCorte} className="w-full md:w-auto bg-blue-600 text-white px-10 py-4 rounded-[22px] text-[10px] font-black uppercase flex items-center justify-center gap-3 active:scale-95 transition-all">
                 <Calculator size={16}/> Corte de Caja
@@ -203,12 +248,15 @@ export default function AdminOrders() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {getFilteredOrders().map(order => {
                 const status = (order.estado || '').toUpperCase();
+                const isCanceled = status === 'CANCELADO';
+                
                 return (
-                  <div key={order.id} className={`bg-[#0A0A0A] border rounded-[40px] p-8 transition-all ${status === 'FINALIZADO' ? 'opacity-40 grayscale border-white/5' : 'border-white/10 shadow-2xl hover:border-green-500/30'}`}>
+                  <div key={order.id} className={`bg-[#0A0A0A] border rounded-[40px] p-8 transition-all ${status === 'FINALIZADO' || isCanceled ? 'opacity-40 grayscale border-white/5' : 'border-white/10 shadow-2xl hover:border-green-500/30'}`}>
                     <div className="flex justify-between items-start mb-6">
                       <div>
-                        <span className="text-[8px] font-black uppercase px-3 py-1 rounded-full bg-green-600/20 text-green-500 mb-2 inline-block border border-green-500/20">{order.estado}</span>
+                        <span className={`text-[8px] font-black uppercase px-3 py-1 rounded-full mb-2 inline-block border ${isCanceled ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-green-600/20 text-green-500 border-green-500/20'}`}>{order.estado}</span>
                         <h3 className="text-2xl font-black uppercase italic tracking-tighter">{order.nombre_cliente}</h3>
+                        <p className="text-[9px] text-gray-600 font-black mt-1 uppercase tracking-widest">{format(new Date(order.created_at), 'HH:mm')} hrs</p>
                       </div>
                       <p className="text-2xl font-black text-green-500">{formatCurrency(order.total)}</p>
                     </div>
@@ -217,9 +265,12 @@ export default function AdminOrders() {
                         <span key={idx} className="text-[8px] font-black uppercase bg-white/[0.05] px-3 py-1.5 rounded-lg text-gray-400">{item.quantity}{item.unidad || 'kg'} {item.nombre}</span>
                       ))}
                     </div>
-                    <div className="pt-6 border-t border-white/5">
+                    <div className="pt-6 border-t border-white/5 flex gap-2">
                       {(status === 'PENDIENTE' || status === 'PENDIENCE') && (
-                        <button onClick={() => openWeighing(order)} className="w-full bg-green-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 active:scale-95"><Scale size={16}/> Surtir y Pesar</button>
+                        <>
+                          <button onClick={() => openWeighing(order)} className="flex-1 bg-green-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 active:scale-95"><Scale size={16}/> Surtir y Pesar</button>
+                          <button onClick={() => cancelOrder(order)} className="bg-red-600/10 text-red-500 p-4 rounded-2xl hover:bg-red-600 hover:text-white transition-all"><Trash2 size={16}/></button>
+                        </>
                       )}
                       {status === 'PENDIENTE POR PAGAR' && (
                         <button onClick={() => { setSelectedOrder(order); setShowPaymentModal(true); }} className="w-full bg-amber-500 text-black py-4 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 active:scale-95"><CreditCard size={16}/> Confirmar Pago</button>
@@ -227,7 +278,8 @@ export default function AdminOrders() {
                       {status === 'PENDIENTE POR ENTREGAR' && (
                         <button onClick={() => finalizeDelivery(order)} className="w-full bg-blue-600 text-white py-4 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 active:scale-95"><Truck size={16}/> Confirmar Entrega</button>
                       )}
-                      {status === 'FINALIZADO' && <p className="text-center text-[9px] font-black text-gray-600 uppercase">Pedido Completado ✅</p>}
+                      {status === 'FINALIZADO' && <p className="text-center w-full text-[9px] font-black text-gray-600 uppercase">Pedido Completado ✅</p>}
+                      {isCanceled && <p className="text-center w-full text-[9px] font-black text-red-600 uppercase">Pedido Cancelado 🗑️</p>}
                     </div>
                   </div>
                 );
@@ -285,7 +337,7 @@ export default function AdminOrders() {
         </div>
       )}
 
-      {/* MODAL CORTE MAESTRO (FIXED) */}
+      {/* MODAL CORTE MAESTRO */}
       {showCorteModal && corteSummary && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl overflow-y-auto">
           <div className="bg-[#0A0A0A] border border-white/10 rounded-[60px] p-10 w-full max-w-4xl relative flex flex-col md:flex-row gap-8 my-auto">
