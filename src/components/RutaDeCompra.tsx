@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/utils';
-import { Zap, ChevronDown, Search, ClipboardList, CheckCircle2, X, ShoppingCart, Loader2 } from 'lucide-react';
+import { 
+  Zap, ChevronDown, Search, ClipboardList, CheckCircle2, X, ShoppingCart, Loader2, AlertCircle
+} from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
@@ -12,16 +14,50 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showChecklist, setShowChecklist] = useState(false);
+  
+  // ✅ ESTADO PARA CARGAR LA ORDEN PLANEADA
+  const [ordenPlaneada, setOrdenPlaneada] = useState<any>(null);
   const [registroCompra, setRegistroCompra] = useState<Record<string, any>>({});
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // 1. Cargar Productos y Ventas
         const { data: p } = await supabase.from('productos').select('*');
-        const { data: o } = await supabase.from('pedidos').select('detalle_pedido').eq('estado', 'Finalizado').gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString());
+        const { data: o } = await supabase.from('pedidos')
+          .select('detalle_pedido')
+          .eq('estado', 'Finalizado')
+          .gte('created_at', new Date(Date.now() - 7*24*60*60*1000).toISOString());
+        
+        // 2. BUSCAR ORDEN DE ABASTO PENDIENTE PARA CENTRAL
+        const { data: mision } = await supabase
+          .from('ordenes_abasto')
+          .select('*')
+          .eq('estado', 'Pendiente')
+          .or('proveedor_nombre.eq.CENTRAL,proveedor_id.eq.TODOS')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
         if (p) setProducts(p);
         if (o) setSalesData(o);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+        
+        if (mision) {
+          setOrdenPlaneada(mision);
+          // Pre-cargar el registro de compra con lo planeado
+          const preCarga: Record<string, any> = {};
+          mision.items.forEach((item: any) => {
+            preCarga[item.sku] = {
+              cantidad: item.cantidad_sugerida,
+              cost: item.costo_base,
+              nombre: item.nombre
+            };
+          });
+          setRegistroCompra(preCarga);
+          alert(`🎯 Misión cargada: Se encontraron ${mision.items.length} artículos planeados.`);
+        }
+      } catch (e) { console.error("Error al cargar ruta:", e); } 
+      finally { setLoading(false); }
     };
     fetchData();
   }, []);
@@ -53,94 +89,151 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
 
   const updateRegistro = (sku: string, field: string, value: any, itemRef?: any) => {
     setRegistroCompra(prev => {
-      const cur = prev[sku] || { cantidad: '', cost: itemRef?.costo || 0, nombre: itemRef?.nombre };
+      const cur = prev[sku] || { 
+        cantidad: '', 
+        cost: itemRef?.costo || 0, 
+        nombre: itemRef?.nombre 
+      };
       return { ...prev, [sku]: { ...cur, [field]: value } };
     });
   };
 
+  // ✅ EJECUCIÓN MAESTRA (RUTA): CIERRA EL CICLO DE PLANEACIÓN
   const ejecutarCompraMaestra = async () => {
     const itemsParaComprar = Object.entries(registroCompra).filter(([_, val]) => Number(val.cantidad) > 0);
-    if (itemsParaComprar.length === 0) return alert("El carrito está vacío.");
+    if (itemsParaComprar.length === 0) return alert("Hugo, no has marcado qué compraste.");
     
     setIsSubmitting(true);
     try {
       const totalNota = itemsParaComprar.reduce((a, [_, d]) => a + (Number(d.cantidad) * Number(d.cost) || 0), 0);
       const folioGen = `RUTA-${format(new Date(), 'ddMMyy-HHmm')}`;
 
+      // 1. Crear el Header del Gasto Real
       const { data: compraHeader, error: errH } = await supabase.from('compras').insert({ 
-        proveedor: 'ABASTO CENTRAL', folio: folioGen, total: totalNota, metodo_pago: 'Efectivo'
+        proveedor: 'ABASTO CENTRAL',
+        folio: folioGen, 
+        total: totalNota,
+        metodo_pago: 'Efectivo'
       }).select().single();
 
       if (errH) throw errH;
 
+      // 2. Registrar Detalle y Actualizar Productos
       for (const [sku, d] of itemsParaComprar) {
         const p = products.find(x => x.sku === sku);
         if (!p) continue;
+
         const cantNum = Number(d.cantidad);
         const costoNum = Number(d.cost);
 
         await supabase.from('compras_detalle').insert({
-          compra_id: compraHeader.id, sku: sku, nombre: p.nombre, cantidad: cantNum, 
-          costo_unitario: costoNum, subtotal: Number((cantNum * costoNum).toFixed(2))
+          compra_id: compraHeader.id,
+          producto_id: p.id,
+          sku: sku,
+          nombre: p.nombre,
+          cantidad: cantNum,
+          costo_unitario: costoNum,
+          subtotal: Number((cantNum * costoNum).toFixed(2))
         });
 
         await supabase.from('productos').update({ 
-          costo: costoNum, stock_actual: Number(((p.stock_actual || 0) + cantNum).toFixed(3)) 
-        }).eq('sku', sku);
+          costo: costoNum, 
+          stock_actual: Number(((p.stock_actual || 0) + cantNum).toFixed(3)) 
+        }).eq('id', p.id);
       }
 
-      alert("✅ Misión Sincronizada."); 
+      // 3. FINALIZAR ORDEN DE ABASTO (Si existía una)
+      if (ordenPlaneada) {
+        await supabase.from('ordenes_abasto').update({ 
+          estado: 'Completado',
+          compra_id: compraHeader.id 
+        }).eq('id', ordenPlaneada.id);
+      }
+
+      alert("🚀 Misión Cumplida, Hugo. Stock actualizado y plan cerrado."); 
       onBack();
-    } catch (e: any) { alert("Error: " + e.message); } 
+    } catch (e: any) { alert("Error de Sincronización: " + e.message); } 
     finally { setIsSubmitting(false); }
   };
+
+  const currentTotal = Object.values(registroCompra).reduce((a, b) => a + (Number(b.cantidad) * Number(b.cost) || 0), 0);
 
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><Loader2 className="text-green-500 animate-spin" size={48}/></div>;
 
   return (
     <div className="bg-[#050505] min-h-screen pb-48 font-sans text-white">
+      
+      {/* HEADER DINÁMICO */}
       <div className="p-6 bg-black border-b border-white/10 flex justify-between items-center sticky top-0 z-[70] backdrop-blur-xl">
         <button onClick={onBack} className="bg-white/5 p-3 rounded-2xl"><X size={20}/></button>
         <div className="text-center">
-          <h2 className="text-xl font-black uppercase italic tracking-tighter">Misión <span className="text-green-500">Central</span></h2>
-          <p className="text-[9px] text-green-500 font-black">{formatCurrency(Object.values(registroCompra).reduce((a, b) => a + (Number(b.cantidad) * Number(b.cost) || 0), 0))}</p>
+          <h2 className="text-xl font-black uppercase italic tracking-tighter">
+            Misión <span className="text-green-500">{ordenPlaneada ? 'Planeada' : 'Libre'}</span>
+          </h2>
+          <p className="text-[9px] text-green-500 font-black">PRESUPUESTO: {formatCurrency(currentTotal)}</p>
         </div>
-        <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl border border-white/10">
-          <ClipboardList size={22} className={Object.keys(registroCompra).length > 0 ? 'text-green-500' : 'text-gray-500'} />
+        <button onClick={() => setShowChecklist(true)} className="relative bg-white/5 p-3 rounded-2xl">
+          <ClipboardList size={22} className={ordenPlaneada ? 'text-blue-500' : 'text-gray-500'} />
         </button>
       </div>
 
-      <div className="p-4 bg-black/50 border-b border-white/5">
-        <input type="text" placeholder="BUSCAR EN RUTA..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl py-4 px-6 text-xs font-black uppercase outline-none focus:border-green-500" />
+      {/* AVISO DE MISIÓN CARGADA */}
+      {ordenPlaneada && (
+        <div className="mx-6 mt-6 p-4 bg-blue-600/20 border border-blue-500/30 rounded-2xl flex items-center gap-4">
+           <AlertCircle className="text-blue-500" size={20}/>
+           <div>
+             <p className="text-[10px] font-black uppercase text-white">Plan de Abasto Detectado</p>
+             <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Se pre-cargaron {ordenPlaneada.items.length} productos.</p>
+           </div>
+        </div>
+      )}
+
+      {/* BUSCADOR */}
+      <div className="p-6">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16} />
+          <input type="text" placeholder="AÑADIR EXTRA O BUSCAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-xs font-black uppercase outline-none focus:border-green-500" />
+        </div>
       </div>
 
-      <div className="p-6 space-y-4 max-w-7xl mx-auto">
+      {/* LISTA DE CATEGORÍAS */}
+      <div className="px-6 space-y-4 max-w-7xl mx-auto">
         {sortedCategories.map(cat => {
           const items = analysis.filter(p => (p.categoria || 'Otros') === cat && p.nombre.toLowerCase().includes(searchTerm.toLowerCase()));
           if (items.length === 0) return null;
-          const minUrg = Math.min(...items.map(i => i.urg));
+
           return (
-            <div key={cat} className={`border rounded-[35px] overflow-hidden transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10' : 'border-white/5 bg-white/[0.01]'}`}>
+            <div key={cat} className={`border rounded-[35px] overflow-hidden transition-all ${expandedCategory === cat ? 'bg-[#0A0A0A] border-white/10' : 'border-white/5'}`}>
               <button onClick={() => setExpandedCategory(expandedCategory === cat ? null : cat)} className="w-full p-6 flex justify-between items-center">
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full shadow-[0_0_10px] ${minUrg === 0 ? 'bg-red-500 shadow-red-500' : minUrg === 1 ? 'bg-orange-500 shadow-orange-500' : 'bg-green-500 shadow-green-500'}`}></div>
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em]">{cat}</span>
-                </div>
+                <span className="text-[10px] font-black uppercase tracking-[0.3em]">{cat}</span>
                 <ChevronDown size={16} className={expandedCategory === cat ? 'rotate-180' : ''}/>
               </button>
+
               {expandedCategory === cat && (
-                <div className="p-4 space-y-6 bg-black/40">
+                <div className="p-4 space-y-4 bg-black/40">
                   {items.map(item => {
                     const data = registroCompra[item.sku] || { cantidad: '', cost: item.costo };
+                    const estaEnPlan = ordenPlaneada?.items.some((i: any) => i.sku === item.sku);
+
                     return (
-                      <div key={item.sku} className={`p-6 rounded-[2.5rem] border ${item.urg === 0 ? 'border-red-600/30 bg-red-600/[0.03]' : 'border-white/5 bg-white/[0.01]'}`}>
-                        <div className="flex justify-between items-start mb-6">
-                          <div><p className="text-xs font-black uppercase text-white">{item.nombre}</p><p className="text-[9px] text-gray-500 font-bold uppercase mt-1">Stock: {Number(item.stock_actual.toFixed(3))} {item.unidad}</p></div>
-                          {item.urg < 3 && <span className={`text-[9px] font-black px-3 py-1 rounded-full ${item.urg === 0 ? 'bg-red-500 text-white' : 'bg-orange-500 text-black'}`}>Sug: +{item.sug}</span>}
+                      <div key={item.sku} className={`p-6 rounded-[2.5rem] border ${estaEnPlan ? 'border-blue-500/30 bg-blue-500/5' : 'border-white/5'}`}>
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex-1">
+                            <p className="text-xs font-black uppercase text-white">{item.nombre}</p>
+                            <p className="text-[9px] text-gray-500 font-bold uppercase mt-1">STOCK: {Number(item.stock_actual.toFixed(3))} {item.unidad}</p>
+                            {estaEnPlan && <span className="text-[7px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-black uppercase mt-2 inline-block">Planeado</span>}
+                          </div>
+                          {item.urg < 3 && <span className={`text-[9px] font-black px-3 py-1 rounded-full ${item.urg === 0 ? 'bg-red-500' : 'bg-orange-500 text-black'}`}>Sug: +{item.sug}</span>}
                         </div>
                         <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-black/50 p-4 rounded-2xl border border-white/5"><label className="text-[7px] text-gray-500 uppercase font-black block mb-2">Comprar</label><input type="number" value={data.cantidad} onChange={(e) => updateRegistro(item.sku, 'cantidad', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" placeholder="0.0"/></div>
-                          <div className="bg-black/50 p-4 rounded-2xl border border-white/5"><label className="text-[7px] text-gray-500 uppercase font-black block mb-2">Costo</label><input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-white outline-none" /></div>
+                          <div className="bg-black p-4 rounded-2xl border border-white/5 shadow-inner">
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-1 italic">Comprar</label>
+                             <input type="number" value={data.cantidad} onChange={(e) => updateRegistro(item.sku, 'cantidad', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" placeholder="0.0"/>
+                          </div>
+                          <div className="bg-black p-4 rounded-2xl border border-white/5 shadow-inner">
+                             <label className="text-[7px] text-gray-500 uppercase font-black block mb-1 italic">Costo Real</label>
+                             <input type="number" value={data.cost} onChange={(e) => updateRegistro(item.sku, 'cost', e.target.value, item)} className="w-full bg-transparent text-2xl font-black text-white outline-none" />
+                          </div>
                         </div>
                       </div>
                     );
@@ -152,9 +245,10 @@ export default function RutaDeCompra({ onBack }: { onBack: () => void }) {
         })}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60] shadow-2xl">
+      {/* FOOTER DE ACCIÓN */}
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-black border-t border-white/10 z-[60] shadow-2xl backdrop-blur-xl">
         <button onClick={ejecutarCompraMaestra} disabled={issubmitting} className="w-full bg-green-600 h-16 rounded-[2rem] text-black font-black uppercase text-xs tracking-widest active:scale-95 transition-all flex items-center justify-center gap-3">
-          {issubmitting ? 'Sincronizando...' : <><ShoppingCart size={18}/> Finalizar y Cargar Stock</>}
+          {issubmitting ? 'Sincronizando...' : <><ShoppingCart size={18}/> Finalizar Misión Central</>}
         </button>
       </div>
     </div>
