@@ -6,7 +6,7 @@ import {
   Camera, Save, ArrowLeft, Package, Truck, DollarSign, 
   BarChart3, UploadCloud, QrCode, Search, Filter, 
   AlertCircle, History, Plus, Minus, X, CheckCircle2, 
-  ClipboardList, TrendingDown, Snowflake, ChevronRight, Wallet
+  ClipboardList, TrendingDown, Snowflake, ChevronRight, Wallet, Send
 } from 'lucide-react';
 import { format, subDays, isAfter } from 'date-fns';
 
@@ -27,8 +27,6 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
   const [formData, setFormData] = useState<any>({});
   const [misionItems, setMisionItems] = useState<any[]>([]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => { fetchInitialData(); }, []);
 
   const fetchInitialData = async () => {
@@ -48,7 +46,6 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
     setLoading(false);
   };
 
-  // ✅ RADAR DE COSTOS: Consulta con Join para historial real
   const fetchHistory = async (sku: string) => {
     const { data } = await supabase
       .from('compras_detalle')
@@ -76,75 +73,66 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
 
   const handleScanSuccess = (sku: string) => {
     const found = products.find(p => p.sku === sku);
-    if (found) {
-      openProductSheet(found);
-    } else {
-      setFormData({ sku, nombre: '', costo: 0, stock_actual: 0 });
-      setCostHistory([]);
-      setIsEditing(true);
-    }
+    if (found) openProductSheet(found);
     setShowScanner(false);
   };
 
-  // ✅ MISIÓN DE ABASTO CON CÁLCULO DE EFECTIVO
+  // ✅ GENERACIÓN DE LISTA (SOLO PLANEACIÓN)
   const startMision = (provId: string) => {
+    // Filtramos: Prioridad Agotados (<=0) y Bajos (<5)
     const items = products.filter(p => {
       const matchProv = provId === 'TODOS' || p.proveedor_id?.toString() === provId;
       return matchProv && (p.stock_actual || 0) < 5;
     }).map(p => ({
-      ...p,
-      cantidad_a_comprar: Number(Math.max(0, 10 - (p.stock_actual || 0)).toFixed(3)),
-      costo_ajustado: p.costo || 0
+      sku: p.sku,
+      nombre: p.nombre,
+      unidad: p.unidad,
+      stock_actual: p.stock_actual,
+      costo_base: p.costo || 0,
+      cantidad_sugerida: Number(Math.max(0, 10 - (p.stock_actual || 0)).toFixed(3))
     }));
 
-    if (items.length === 0) return alert("Socio, el stock está saludable.");
+    if (items.length === 0) return alert("Socio, este proveedor tiene stock saludable.");
     setMisionItems(items);
     setActiveView('mision');
   };
 
-  // ✅ BOTÓN ATÓMICO: GUARDAR TODO Y REGISTRAR GASTO
-  const confirmAndRegisterPurchase = async () => {
-    if (!misionItems.some(i => i.cantidad_a_comprar > 0)) return alert("No hay items para comprar.");
-    if (!window.confirm("¿Confirmar recepción y registrar gasto en caja?")) return;
-    
+  const totalsMision = useMemo(() => {
+    const neto = misionItems.reduce((acc, i) => acc + (i.cantidad_sugerida * i.costo_base), 0);
+    return { neto, totalConBuffer: Number((neto * 1.10).toFixed(2)) };
+  }, [misionItems]);
+
+  // ✅ PASO CLAVE: GUARDAR EN 'ordenes_abasto' SIN AFECTAR STOCK
+  const emitirOrdenAbasto = async () => {
     setLoading(true);
     try {
-      const folioGen = `MISION-${format(new Date(), 'ddMMyy-HHmm')}`;
       const provName = selectedProviderId === 'TODOS' ? 'VARIOS' : proveedores.find(p => p.id.toString() === selectedProviderId)?.nombre || 'CENTRAL';
 
-      // 1. Crear la Nota de Compra (Header)
-      const totalNota = misionItems.reduce((acc, curr) => acc + (curr.cantidad_a_comprar * curr.costo_ajustado), 0);
-      const { data: compraHeader, error: errH } = await supabase.from('compras').insert({
-        proveedor: provName,
-        folio: folioGen,
-        total: totalNota,
-        metodo_pago: 'Efectivo'
-      }).select().single();
+      // Verificar si ya hay una orden pendiente para este proveedor para sobrescribirla
+      const { data: existente } = await supabase
+        .from('ordenes_abasto')
+        .select('id')
+        .eq('proveedor_id', selectedProviderId)
+        .eq('estado', 'Pendiente')
+        .single();
 
-      if (errH) throw errH;
+      const payload = {
+        proveedor_id: selectedProviderId,
+        proveedor_nombre: provName,
+        total_planeado: totalsMision.neto,
+        total_con_buffer: totalsMision.totalConBuffer,
+        items: misionItems,
+        estado: 'Pendiente'
+      };
 
-      // 2. Registrar Detalles y Actualizar Stock/Costo
-      for (const item of misionItems) {
-        if (item.cantidad_a_comprar <= 0) continue;
-
-        await supabase.from('compras_detalle').insert({
-          compra_id: compraHeader.id,
-          sku: item.sku,
-          nombre: item.nombre,
-          cantidad: item.cantidad_a_comprar,
-          costo_unitario: item.costo_ajustado,
-          subtotal: Number((item.cantidad_a_comprar * item.costo_ajustado).toFixed(2))
-        });
-
-        await supabase.from('productos').update({
-          stock_actual: Number(((item.stock_actual || 0) + item.cantidad_a_comprar).toFixed(3)),
-          costo: item.costo_ajustado
-        }).eq('id', item.id);
+      if (existente) {
+        await supabase.from('ordenes_abasto').update(payload).eq('id', existente.id);
+      } else {
+        await supabase.from('ordenes_abasto').insert([payload]);
       }
 
-      alert("🚀 Misión Exitosa: Stock y Gasto registrados.");
+      alert(`🚀 Orden para ${provName} emitida.\nHugo/Rosy ya pueden verla en su módulo.`);
       setActiveView('list');
-      fetchInitialData();
     } catch (e: any) { alert("Error: " + e.message); }
     finally { setLoading(false); }
   };
@@ -176,46 +164,35 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
     return { capitalTotal, agotados };
   }, [products]);
 
-  const totalsMision = useMemo(() => {
-    const neto = misionItems.reduce((acc, i) => acc + (i.cantidad_a_comprar * i.costo_ajustado), 0);
-    return { neto, totalConBuffer: Number((neto * 1.10).toFixed(2)) };
-  }, [misionItems]);
-
   if (activeView === 'mision') {
     return (
       <div className="min-h-screen bg-[#050505] text-white p-6 pb-64 animate-in slide-in-from-bottom duration-500">
         <div className="max-w-4xl mx-auto">
-          <div className="flex justify-between items-center mb-8">
-            <button onClick={() => setActiveView('list')} className="bg-white/5 p-4 rounded-2xl"><ArrowLeft/></button>
-            <h2 className="text-2xl font-black uppercase italic text-green-500 tracking-tighter">Misión de Abasto</h2>
-            <div className="w-12"></div>
-          </div>
+          <button onClick={() => setActiveView('list')} className="bg-white/5 p-4 rounded-2xl mb-6"><ArrowLeft/></button>
+          <h2 className="text-3xl font-black uppercase italic text-green-500 mb-2">Plan de Abasto</h2>
+          <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-8 italic">Selecciona lo que Hugo/Rosy deben traer</p>
 
-          <div className="bg-green-600/10 border border-green-500/20 p-8 rounded-[40px] mb-8 text-center">
-            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.3em] mb-2">Efectivo a llevar (+10% Buffer)</p>
+          <div className="bg-green-600/10 border border-green-500/20 p-8 rounded-[40px] mb-8 text-center shadow-2xl">
+            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.3em] mb-2 flex items-center justify-center gap-2">
+              <Wallet size={12}/> Efectivo Sugerido (+10%)
+            </p>
             <h3 className="text-5xl font-black italic text-white">{formatCurrency(totalsMision.totalConBuffer)}</h3>
           </div>
 
           <div className="space-y-4">
             {misionItems.map((item, idx) => (
-              <div key={item.id} className="bg-[#0A0A0A] border border-white/5 p-6 rounded-[35px] flex flex-col md:flex-row gap-6 items-center">
-                <div className="flex-1">
-                  <h4 className="text-lg font-black uppercase italic leading-none">{item.nombre}</h4>
-                  <p className="text-[9px] font-bold text-gray-500 mt-2 uppercase tracking-widest italic">Stock Actual: {Number(item.stock_actual.toFixed(3))} {item.unidad}</p>
+              <div key={item.sku} className="bg-[#0A0A0A] border border-white/5 p-6 rounded-[35px] flex flex-col md:flex-row gap-6 items-center">
+                <div className="flex-1 text-center md:text-left">
+                  <h4 className="text-lg font-black uppercase italic">{item.nombre}</h4>
+                  <p className={item.stock_actual <= 0 ? 'text-red-500 text-[9px] font-bold' : 'text-gray-500 text-[9px]'}>
+                    STOCK ACTUAL: {Number(item.stock_actual.toFixed(3))} {item.unidad}
+                  </p>
                 </div>
-                <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
-                  <div className="bg-black p-4 rounded-2xl border border-white/5 shadow-inner">
-                    <label className="text-[7px] text-gray-500 font-black uppercase block mb-1">Pedir</label>
-                    <input type="number" value={item.cantidad_a_comprar} onChange={(e) => {
-                      const n = [...misionItems]; n[idx].cantidad_a_comprar = parseFloat(e.target.value) || 0; setMisionItems(n);
-                    }} className="bg-transparent text-xl font-black text-green-500 outline-none w-20" />
-                  </div>
-                  <div className="bg-black p-4 rounded-2xl border border-white/5 shadow-inner">
-                    <label className="text-[7px] text-gray-500 font-black uppercase block mb-1">Costo Unit.</label>
-                    <input type="number" value={item.costo_ajustado} onChange={(e) => {
-                      const n = [...misionItems]; n[idx].costo_ajustado = parseFloat(e.target.value) || 0; setMisionItems(n);
-                    }} className="bg-transparent text-xl font-black text-white outline-none w-20" />
-                  </div>
+                <div className="bg-black p-4 rounded-2xl border border-white/5 flex items-center gap-4">
+                  <label className="text-[8px] font-black text-gray-600 uppercase">A PEDIR:</label>
+                  <input type="number" value={item.cantidad_sugerida} onChange={(e) => {
+                    const n = [...misionItems]; n[idx].cantidad_sugerida = parseFloat(e.target.value) || 0; setMisionItems(n);
+                  }} className="bg-transparent text-xl font-black text-green-500 outline-none w-20 text-center" />
                 </div>
               </div>
             ))}
@@ -223,13 +200,9 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="fixed bottom-0 left-0 right-0 p-8 bg-black/90 backdrop-blur-xl border-t border-white/10 z-[100]">
-          <div className="max-w-4xl mx-auto flex flex-col md:flex-row gap-4">
-            <div className="flex-1 bg-white/5 p-4 rounded-3xl border border-white/10 flex justify-between items-center px-8">
-              <p className="text-xs font-black uppercase tracking-widest text-gray-400">Total Neto:</p>
-              <p className="text-2xl font-black">{formatCurrency(totalsMision.neto)}</p>
-            </div>
-            <button onClick={confirmAndRegisterPurchase} className="flex-[2] bg-white text-black py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-xs active:scale-95 transition-all shadow-2xl">
-              Confirmar Recepción y Registrar Gasto 🚀
+          <div className="max-w-4xl mx-auto">
+            <button onClick={emitirOrdenAbasto} disabled={loading} className="w-full bg-white text-black py-7 rounded-[2.5rem] font-black uppercase tracking-[0.3em] text-xs shadow-[0_0_40px_rgba(255,255,255,0.1)] active:scale-95 transition-all flex items-center justify-center gap-4">
+              <Send size={20}/> {loading ? 'Emitiendo...' : 'Emitir Orden de Abasto 🚀'}
             </button>
           </div>
         </div>
@@ -238,29 +211,25 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8 pb-40 animate-in fade-in duration-500">
+    <div className="min-h-screen bg-[#050505] text-white p-4 md:p-8 pb-40 animate-in fade-in">
       <div className="max-w-7xl mx-auto">
-        
-        {/* INDICADORES ESTRATÉGICOS */}
+        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          <button onClick={() => setActiveFilter(activeFilter === 'inversion' ? 'todos' : 'inversion')} className={`p-6 rounded-[2.5rem] border transition-all text-left relative overflow-hidden group ${activeFilter === 'inversion' ? 'bg-green-600 border-green-400 shadow-2xl' : 'bg-white/5 border-white/10'}`}>
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-all"><DollarSign size={48}/></div>
-            <p className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-50 text-white">Inversión Total</p>
+          <button onClick={() => setActiveFilter(activeFilter === 'inversion' ? 'todos' : 'inversion')} className={`p-6 rounded-[2.5rem] border transition-all text-left relative overflow-hidden group ${activeFilter === 'inversion' ? 'bg-green-600 border-green-400' : 'bg-white/5 border-white/10'}`}>
+            <div className="absolute top-0 right-0 p-4 opacity-10"><DollarSign size={48}/></div>
+            <p className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-50">Inversión Total</p>
             <h3 className="text-3xl font-black italic">{formatCurrency(stats.capitalTotal)}</h3>
           </button>
-          <button onClick={() => setActiveFilter(activeFilter === 'agotado' ? 'todos' : 'agotado')} className={`p-6 rounded-[2.5rem] border transition-all text-left flex items-center justify-between group ${activeFilter === 'agotado' ? 'bg-red-600 border-red-400 shadow-2xl' : 'bg-white/5 border-white/10'}`}>
-            <div>
-              <p className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-50 text-white">Agotados</p>
-              <h3 className="text-3xl font-black">{stats.agotados} SKUs</h3>
-            </div>
-            <AlertCircle size={40} className="text-red-500/30"/>
+          <button onClick={() => setActiveFilter(activeFilter === 'agotado' ? 'todos' : 'agotado')} className={`p-6 rounded-[2.5rem] border transition-all text-left flex items-center justify-between group ${activeFilter === 'agotado' ? 'bg-red-600 border-red-400' : 'bg-white/5 border-white/10'}`}>
+            <div><p className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-50">Agotados</p><h3 className="text-3xl font-black">{stats.agotados} SKUs</h3></div>
+            <AlertCircle size={40} className="opacity-30"/>
           </button>
         </div>
 
         {/* MULTIFILTRO */}
         <div className="flex flex-col gap-4 mb-10 sticky top-2 z-[50]">
           <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-            <button onClick={() => setSelectedProviderId('TODOS')} className={`px-6 py-3 rounded-full text-[9px] font-black uppercase border transition-all whitespace-nowrap ${selectedProviderId === 'TODOS' ? 'bg-white text-black' : 'bg-black text-gray-500 border-white/10'}`}>Todos los Proveedores</button>
+            <button onClick={() => setSelectedProviderId('TODOS')} className={`px-6 py-3 rounded-full text-[9px] font-black uppercase border transition-all whitespace-nowrap ${selectedProviderId === 'TODOS' ? 'bg-white text-black' : 'bg-black text-gray-500 border-white/10'}`}>Todos</button>
             {proveedores.map(prov => (
               <button key={prov.id} onClick={() => setSelectedProviderId(prov.id.toString())} className={`px-6 py-3 rounded-full text-[9px] font-black uppercase border transition-all whitespace-nowrap ${selectedProviderId === prov.id.toString() ? 'bg-green-600 text-white border-green-500' : 'bg-black text-gray-500 border-white/10'}`}>{prov.nombre}</button>
             ))}
@@ -268,65 +237,61 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
           <div className="flex gap-4">
             <div className="flex-1 relative">
               <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-600" size={20} />
-              <input type="text" placeholder="BUSCAR PRODUCTO O SKU..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-full py-5 pl-16 text-xs font-black uppercase outline-none focus:border-green-500 shadow-2xl" />
+              <input type="text" placeholder="BUSCAR..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-black border border-white/10 rounded-full py-5 pl-16 text-xs font-black uppercase outline-none focus:border-green-500" />
             </div>
-            <button onClick={() => setShowScanner(true)} className="bg-green-600 text-white p-5 rounded-full shadow-2xl active:scale-90"><Camera size={24}/></button>
+            <button onClick={() => setShowScanner(true)} className="bg-green-600 text-white p-5 rounded-full"><Camera size={24}/></button>
           </div>
         </div>
 
-        {/* LISTA DE PRODUCTOS */}
+        {/* LISTA */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {processedProducts.map(p => (
-            <div key={p.id} className={`bg-[#0A0A0A] border rounded-[35px] p-6 transition-all relative overflow-hidden ${p.estancado ? 'border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/5'}`}>
-              {p.estancado && <div className="absolute top-4 right-4 text-blue-500 animate-pulse flex items-center gap-1"><Snowflake size={14}/><span className="text-[7px] font-black">STAGNANT</span></div>}
+            <div key={p.id} className={`bg-[#0A0A0A] border rounded-[35px] p-6 relative overflow-hidden ${p.estancado ? 'border-blue-500/30' : 'border-white/5'}`}>
+              {p.estancado && <div className="absolute top-4 right-4 text-blue-500"><Snowflake size={14}/></div>}
               <div className="flex gap-4 items-start mb-6">
-                <img src={p.url_imagen} className="w-16 h-16 rounded-2xl object-cover border border-white/5" />
+                <img src={p.url_imagen} className="w-16 h-16 rounded-2xl object-cover" />
                 <div className="flex-1">
-                  <p className="text-[7px] font-black text-gray-600 uppercase mb-1">{p.categoria}</p>
                   <h4 className="text-xs font-black uppercase text-white leading-tight">{p.nombre}</h4>
-                  {activeFilter === 'inversion' && <p className="text-[10px] font-black text-green-500 mt-2 bg-green-500/10 px-2 py-1 rounded-lg inline-block tracking-tighter">CAPITAL: {formatCurrency(p.capital)}</p>}
+                  {activeFilter === 'inversion' && <p className="text-[10px] font-black text-green-500 mt-2">CAPITAL: {formatCurrency(p.capital)}</p>}
                 </div>
               </div>
               <div className="space-y-4">
                 <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
                   <div className={`h-full transition-all duration-1000 ${p.stock_actual < 3 ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (p.stock_actual / 10) * 100)}%` }} />
                 </div>
-                <button onClick={() => openProductSheet(p)} className="w-full bg-white/5 hover:bg-white/10 py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest border border-white/5 transition-all">Ver Ficha de Producto</button>
+                <button onClick={() => openProductSheet(p)} className="w-full bg-white/5 hover:bg-white/10 py-3 rounded-2xl text-[9px] font-black uppercase tracking-widest border border-white/5">Ver Radar</button>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* BOTÓN DE MISIÓN FLOTANTE */}
+      {/* ✅ BOTÓN DE MISIÓN FLOTANTE */}
       {selectedProviderId !== 'TODOS' && (
         <div 
           onClick={() => startMision(selectedProviderId)}
-          className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-white text-black px-10 py-5 rounded-full flex items-center gap-4 shadow-[0_20px_50px_rgba(255,255,255,0.4)] z-[1000] active:scale-95 transition-all cursor-pointer border-4 border-green-500"
+          className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-white text-black px-10 py-5 rounded-full flex items-center gap-4 shadow-3xl z-[1000] active:scale-95 transition-all cursor-pointer border-4 border-green-500"
         >
           <ClipboardList size={24}/>
           <div className="flex flex-col">
-            <span className="text-[7px] font-black uppercase opacity-50">Generar Misión</span>
+            <span className="text-[7px] font-black uppercase opacity-50">Generar Plan</span>
             <span className="text-[11px] font-black uppercase tracking-widest italic">Surtir {proveedores.find(pr => pr.id.toString() === selectedProviderId)?.nombre}</span>
           </div>
           <ChevronRight size={20}/>
         </div>
       )}
 
-      {/* ✅ FICHA RADAR PRO (MODAL) */}
+      {/* MODAL RADAR PRO (RESTURADO COMPLETO) */}
       {isEditing && (
         <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4">
            <div className="bg-[#0A0A0A] border border-white/10 rounded-[50px] p-8 w-full max-w-lg relative animate-in zoom-in duration-300 shadow-3xl">
-              <button onClick={() => setIsEditing(false)} className="absolute top-8 right-8 text-gray-500 hover:text-white transition-colors"><X/></button>
-              <h3 className="text-2xl font-black uppercase italic mb-8 text-green-500 tracking-tighter">Radar de Producto</h3>
-              
+              <button onClick={() => setIsEditing(false)} className="absolute top-8 right-8 text-gray-500"><X/></button>
+              <h3 className="text-2xl font-black uppercase italic mb-8 text-green-500">Radar de Producto</h3>
               <div className="space-y-6">
                  <div className="flex gap-4 bg-black p-4 rounded-3xl border border-white/5">
                     <img src={formData.url_imagen} className="w-20 h-20 rounded-2xl object-cover" />
                     <div><p className="text-xl font-black uppercase leading-none">{formData.nombre}</p><p className="text-[9px] font-black text-gray-500 mt-2 italic">SKU: {formData.sku}</p></div>
                  </div>
-
-                 {/* 📉 HISTORIAL DE COSTOS */}
                  <div className="bg-white/[0.02] p-5 rounded-3xl border border-white/5">
                     <p className="text-[8px] font-black text-green-500 uppercase mb-4 flex items-center gap-2 tracking-widest"><History size={10}/> Historial de Compras</p>
                     <div className="space-y-3">
@@ -335,32 +300,21 @@ export default function InventoryModule({ onBack }: { onBack: () => void }) {
                           <span className="text-gray-500">{format(new Date(h.created_at), 'dd MMM yy')}</span>
                           <span className="text-white font-bold">{formatCurrency(h.costo_unitario)}</span>
                         </div>
-                      )) : <p className="text-[10px] text-gray-600 italic">Sin registros en 'compras_detalle'.</p>}
+                      )) : <p className="text-[10px] text-gray-600 italic">Sin registros.</p>}
                     </div>
                  </div>
-
                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-black p-5 rounded-3xl border border-white/5">
-                      <label className="text-[8px] font-black text-gray-400 uppercase block mb-1 italic">Costo Actual</label>
-                      <input type="number" value={formData.costo} onChange={e => setFormData({...formData, costo: parseFloat(e.target.value) || 0})} className="w-full bg-transparent text-2xl font-black text-white outline-none" />
-                    </div>
-                    <div className="bg-black p-5 rounded-3xl border border-white/5">
-                      <label className="text-[8px] font-black text-gray-400 uppercase block mb-1 italic">Existencia</label>
-                      <input type="number" value={formData.stock_actual} onChange={e => setFormData({...formData, stock_actual: parseFloat(e.target.value) || 0})} className="w-full bg-transparent text-2xl font-black text-green-500 outline-none" />
-                    </div>
+                    <div className="bg-black p-5 rounded-3xl border border-white/5"><label className="text-[8px] font-black text-gray-400 uppercase block mb-1">Costo Actual</label><p className="text-2xl font-black text-white">{formatCurrency(formData.costo)}</p></div>
+                    <div className="bg-black p-5 rounded-3xl border border-white/5"><label className="text-[8px] font-black text-gray-400 uppercase block mb-1">Stock</label><p className="text-2xl font-black text-green-500">{Number(formData.stock_actual?.toFixed(3))} <span className="text-xs">{formData.unidad}</span></p></div>
                  </div>
-
-                 <button onClick={async () => {
-                   const { error } = await supabase.from('productos').update({ costo: formData.costo, stock_actual: formData.stock_actual }).eq('id', formData.id);
-                   if (!error) { setIsEditing(false); fetchInitialData(); }
-                 }} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] shadow-xl active:scale-95 transition-all">Guardar Cambios Titanium</button>
+                 <button onClick={() => setIsEditing(false)} className="w-full bg-white text-black py-6 rounded-3xl font-black uppercase text-[10px] shadow-xl active:scale-95 transition-all">Cerrar Radar</button>
               </div>
            </div>
         </div>
       )}
 
       {showScanner && <Scanner onScanSuccess={handleScanSuccess} onClose={() => setShowScanner(false)} />}
-      <button onClick={onBack} className="fixed bottom-8 left-6 bg-black/80 border border-white/10 p-4 rounded-2xl active:scale-95 transition-all shadow-2xl"><ArrowLeft size={20}/></button>
+      <button onClick={onBack} className="fixed bottom-8 left-6 bg-black/80 border border-white/10 p-4 rounded-2xl active:scale-95 transition-all"><ArrowLeft size={20}/></button>
     </div>
   );
 }
